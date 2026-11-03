@@ -1,0 +1,21 @@
+Estabelecer sessão 1bit - A 1 se estiver a tentar estabelecer sessão 
+Publisher/Subscriber 1bit - A 1 se for publisher e a 0 se vier de um subscriber 
+Registo/subscrição 1bit - A 1 se deseja efetuar um registo ou uma subscrição do que vem a seguir
+Cancelamento subscrição 1bit - A 1 se estiver a vir de um subscriber (bit a 0) e ele estiver a identificar o cancelamento de uma subscrição
+Terminação 1bit - A 1 se estiver a ser requisitado que o
+Identificação de publisher/subscriber 1byte - Deve vir a 0 no momento em que está a estabelecer a sessão e depois é atribuído um número que deve ser usado no resto da sessão pelo respetivo publisher/subscriber
+Opcional: Caso o bit de registo/subscrição esteja a 1 agora temos algo deste género:
+1bit que indica se é a primeira ou última opção
+10bits que são traduzidos para um inteiro e dão o tamanho em bytes do que vem a seguir
+Tradução do topico em bits: que é algo sobre este formato X/Y/Z - que se for totalmente especifico é north/station7/temperature ou pode ser abrevidado para especificar mais do que um conjunto de dados usando *, ou seja, north/station7/*. 
+
+RESUMO
+Campo	                Tamanho	     Obrigatório
+Flags de controlo	8 bits	     Sim
+Identificação	        8 bits	     Sim
+Primeira/última opção	1 bit	     Não
+Comprimento do tópico	7 bits	     Não
+Tópico	                0–127 bytes  Não
+
+
+
