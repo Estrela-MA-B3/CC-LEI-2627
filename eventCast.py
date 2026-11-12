@@ -156,5 +156,5 @@ def interpretar_EventCast(dados):
 def constroiAckMessage(message_id,identificador):
     return
 
-def constroiMessage(topico,metrica,message_id):
+def constroiMessage(topico,message_id):
     return

@@ -1,14 +1,10 @@
 FLAGS
-1) Estabelecer sessão 1bit - A 1 se estiver a tentar estabelecer sessão para receber identificador / Para identificar que tem o identificador no sentido contrário
-2) Publisher/Subscriber 1bit - A 1 se for publisher e a 0 se vier de um subscriber 
-3) Registo/subscrição 1bit - A 1 se deseja efetuar um registo ou uma subscrição do que vem a seguir (so depois de estabelecer sessao) / Para confirmar o registo 
-4) Cancelamento subscrição 1bit - A 1 se estiver a vir de um subscriber (bit a 0) e ele estiver a identificar o cancelamento de uma subscrição / Para confirmar o cancelamento
-5) Terminação 1bit - A 1 se estiver a ser informado que o publicador/subscritor vai terminar / Para confirmar que eliminou todos os ficheiros associados
-6) QoS
-7) Close - Indica se é a ultima comunicacao enviada
-
-
-É possivel ter mais do que uma flag em simultaneo, por exemplo, para enviar so um pacote pode se agregar a flag 1 e a 3.
+1) Publisher/Subscriber 1bit - A 1 se for publisher e a 0 se vier de um subscriber 
+2) Registo/subscrição 1bit - A 1 se deseja efetuar um registo ou uma subscrição do que vem a seguir (so depois de estabelecer sessao) / Para confirmar o registo 
+3) Cancelamento subscrição 1bit - A 1 se estiver a vir de um subscriber (bit a 0) e ele estiver a identificar o cancelamento de uma subscrição / Para confirmar o cancelamento
+4) Terminação 1bit - A 1 se estiver a ser informado que o publicador/subscritor vai terminar / Para confirmar que eliminou todos os ficheiros associados
+5) QoS
+6) Quero Porta UDP 
 
 TamanhoTotal: Tamanho total dos dados enviados da camada aplicional (cabeçalho+payload)
 
@@ -16,10 +12,10 @@ Tópico(binário): que é algo sobre este formato X/Y/Z - que se for totalmente 
 
 RESUMO
 Campo	                Tamanho	   Obrigatório
-TamanhoTotal            16 bits    Sim
+TamanhoTotal            8 bits     Sim
 Flags de controlo	    8 bits	   Sim
 Identificação (sub/pub) 8 bits	   Sim
-PortaUDP                16 bits    Não -> Presente se flag1=1 e flag2=0
+PortaUDP                16 bits    Não -> Presente se flag2=1(fazer subscricao) e flag1=0 (subscritor)
 Tópico	                x bytes    Não -> Presente se flag3 ou flag4 estiver ON
 
 

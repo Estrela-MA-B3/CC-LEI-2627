@@ -3,6 +3,7 @@ import threading
 import time
 import subCast
 import eventCast
+import util
 
 
 class Publisher:
@@ -18,7 +19,6 @@ class Publisher:
         #Vamos assumir que publish é uma lista de (topico, QoS, count, rate)
         self.publish = config["publish"]
         self.drain = config["drain"]
-        self.message_id = 1
         self.runningTCP = True
         self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.control_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
@@ -61,7 +61,8 @@ class Publisher:
 
     def cicloUDP(self,topico,QoS,count,rate):
         try:
-            ##Uma opção é cada thread teria o seu socket e recebia o seu ack do message_id
+            message_id = 1
+            #Uma opção é cada thread teria o seu socket e recebia o seu ack do message_id
             data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             data_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
             acks = {}
@@ -69,24 +70,21 @@ class Publisher:
             thread_ack = threading.Thread(target=self.recebeAcks,args=(acks,data_socket))
             thread_ack.start()
             while (count>0):
-                thread_send = threading.Thread(target=self.enviaMetrica,args=(topico,acks,data_socket))
+                thread_send = threading.Thread(target=self.enviaMetrica,args=(topico,acks,data_socket,message_id))
                 thread_send.start()
                 count -= 1
                 time.sleep(rate)
         finally:
             data_socket.close()
 
-    def enviaMetrica(self,topico,acks,socket):
+    def enviaMetrica(self,topico,acks,socket,message_id):
         addr = self.broker_data
-        #FALTA UM LOCK AQUI
-        m_id = self.message_id
-        self.message_id +=1
-        #UNLOCK
-        message = eventCast.constroiMessage(topico,"qualquercoisa",m_id)
-        acks[m_id]=False
+        message = eventCast.constroiMessage(topico,message_id)
+        acks[message_id]=False
         socket.sendto(message,addr)
         inicio = time.monotonic()
-        while (not acks[m_id] and time.monotonic()-inicio < self.drain):
+        util.registaLog(self.log, self.id, topico, message_id)
+        while (not acks[message_id] and time.monotonic()-inicio < self.drain):
             time.sleep(1)
             socket.sendto(message,addr)
         return
@@ -94,7 +92,9 @@ class Publisher:
     def recebeAcks(self,acks,socket):
         resposta, addr = socket.recvfrom(1024)
         ack, qos, message_id, identificador, topico, metrica = eventCast.interpretar_EventCast(resposta)
-        if ack and message_id in acks: message_id[acks] = True
+        if ack and message_id in acks: acks[message_id] = True
+
+    
 
 
 

@@ -111,7 +111,7 @@ class Publisher:
             regiao, estacao, metrica = topico.split("/")
             set = self.messages.setdefault(regiao, {}).setdefault(estacao, {}).setdefault(metrica, set())
             if qosEfetivo == 2 and message_id in set: return
-            self.registaLog(identificador,topico,message_id) 
+            util.registaLog(self.log, identificador, topico, message_id)
             set.add(message_id)
         except Exception as e:
             return
@@ -122,12 +122,7 @@ class Publisher:
             if (util.filtroCorresponde(filtro,topico)) and filtro_qos == 2: return 2
         return qos
 
-    def registaLog(self, identificador, topico, message_id):
-        timestamp_ms = time.time_ns() // 1_000_000
-    
-        with open(self.log, "a", encoding="utf-8") as ficheiro:
-            ficheiro.write(f"{timestamp_ms} {identificador} {topico} {message_id}\n")
-            ficheiro.flush()
+   
 
     
 

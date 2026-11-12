@@ -200,13 +200,20 @@ class Broker:
         # Estamos a receber um ACK de um subscritor tem de ter o message_id, identificador e topico, neste caso, metrica = null
         # Preferivel: Ler o endereço de onde veio a mensagem e map é feito com base no endereço do subscritor: Menos dados enviado pela rede mas torna o campo identificador inutil, dado que podemos sempre identificar o subscritor pelo par (IP,Porta) origem do pacote dado pelo addr 
         if (ack):
-            pass
+            partes = topico.split("/")
+            if len(partes) != 3 or any(not parte or parte == "*" for parte in partes):return
+            if partes[0] in self.topics:
+                if partes[1] in self.topics[partes[0]].children:
+                    if partes[2] in self.topics[partes[0]].children[partes[1]].children:
+                        if message_id in self.topics[partes[0]].children[partes[1]].children[partes[2]].messages:
+                            ack_dic = self.topics[partes[0]].children[partes[1]].children[partes[2]].messages[message_id]
+                            if identificador in ack_dic: del ack_dic[identificador]
         # Estamos a receber uma nova métrica de um publisher. Neste caso o identificador é o do publisher que acaba por ser também inutil
         else:
-            self.enviaACKEventCast(message_id,addr)
+            self.enviaACKEventCast(message_id,addr) # SIM PASSAR PARA UMA NOVA THREAD.
             #Operação com Lock para ver quem são os destinatários a enviar!
             subscritores, ack_dic = self.obterDestinatarios(topico,message_id)
-            # Estou a ignorar o caso onde temos uma race entre a chegada de um unsubscribe e o envio de um tópico, caso contrário eu ia precisar de ter um lock bloqueado durante o tempo em que estou a tentar enviar uma mensagem para um subscriber, a melhor opção seria ter um lock por subscriber, cc teria tudo bloqueado durante muito tempo.
+            # Colocar Lock na estrtutura para não dar erros de escrita vs leitura
             for id_sub in subscritores:
                 #Problemas com lock aqui tambem -> Estrutura de endereços partilhada por todas as threads
                 if id_sub in self.subscritores: # Muito ineficiente mas ao menos ajuda a filtrar casos onde ele seja terminado
@@ -215,9 +222,8 @@ class Broker:
                     ack_dic[id_sub] = time.monotonic()
             while not ack_dic:
                 time.sleep(1)
-                #Estamos a ignorar problemas de concorrencia entre receber um ACK e estar a reenviar, precisaria de um lock
+                #Estamos a ignorar problemas de concorrencia entre receber um ACK e estar a reenviar, precisaria de um lock -> Devemos adquirir lock para copiar quem vamos enviar e depois enviar, mas o lock deve ser o mais curto possivel para não bloquear a receção de ACKS
                 for id_sub, tempoEspera in ack_dic.items():
-                    if id_sub in self.subscritores: # Muito ineficiente mas ao menos ajuda a filtrar casos onde ele seja terminado
                         endereco = self.subscritores[id_sub]["endereco"]
                         if time.monotonic() - tempoEspera > self.evic_after:
                             # O tempo máximo de espera por uma resposta acabou -> Aciona a terminação do sub geral e remove-o da lista de espera
@@ -227,7 +233,6 @@ class Broker:
                             del ack_dic[id_sub]
                         else:
                             self.enviaPublicacao(endereco,mensagem)
-                    else: del ack_dic[id_sub] #Quando ele é terminado a meio deve ser removido da lista de acks em espera
         #Quando o ack_dic terminar signfica que já recebemos a confirmação de todos os subs ativos, ou seja, já terminados o processo de envio
         return
     
@@ -290,17 +295,17 @@ class Broker:
 
         regiao, estacao, metrica = partes
 
-        region_node = self.topics.get[regiao]
+        region_node = self.topics.get(regiao)
 
         # Criar regiao, caso nao exista
         if region_node is None:
             region_node = RegionNode()
             self.topics[regiao] = region_node
 
-        station_node = self.topics.get[estacao]
+        station_node = region_node.children.get(estacao)
 
         # Criar estacao, caso nao exista
-        if estacao is None:
+        if station_node is None:
             station_node = StationNode()
             region_node.children[estacao] = station_node
 
@@ -483,7 +488,7 @@ class Broker:
         partes = topico.split("/")
         
         if len(partes) != 3 or any(not parte or parte == "*" for parte in partes):
-            return ERRO_TOPICO_INVALIDO
+            return None, None
 
         regiao, estacao, metrica = partes
 
@@ -491,19 +496,19 @@ class Broker:
         region_node = self.topics.get(regiao)
 
         if region_node is None:
-            return None
+            return None, None
 
         # Procurar estacao
         station_node = region_node.children.get(estacao)
 
         if station_node is None:
-            return None
+            return None, None
 
         # Procurar topico
         metric_node = station_node.children.get(metrica)
 
         if metric_node is None:
-            return None
+            return None, None
 
         publication_qos = metric_node.qos
 

@@ -7,9 +7,9 @@ Flags
 Message_id 16bits - não varia durante todo o percurso 
 Identificador 8bits - usado pelo broker para fazer a gestão dos ACKs dos subscritores e dos envios dos publishers
 Payload x bytes
-    1) Tamanho do topico 16 bits 
+    1) Tamanho do topico 8 bits 
     2) Topico 
-    3) Tamanho da metrica 16 bits 
+    3) Tamanho da metrica 8 bits 
     4) Metrica 
 
 
