@@ -1,10 +1,9 @@
+import util 
 
-def interpretar_caracteres(dados):
-#NÃO É PARA MANTER ASSIM. NÃO SE PODE USAR DECODE!
-    return dados.decode("utf-8")
+SUBCAST_HEADER_SIZE = 4
 
 
-def interpretar_cabecalho(dados):
+def interpretar_SubCast(dados):
 
     # Verificar se existem pelo menos 2 bytes
     if len(dados) < 2:
@@ -68,11 +67,87 @@ def interpretar_cabecalho(dados):
         if len(topico_bytes) != tamanho:
             raise ValueError("Tópico incompleto")
 
-        topico = interpretar_caracteres(topico_bytes)
+        topico = util.interpretar_String(topico_bytes)
 
         resultado["opcao"] = opcao
         resultado["tamanho_topico"] = tamanho
         resultado["topico"] = topico
 
     return resultado
+
+def interpretar_opcoes(dados, offset=2):
+
+    opcoes = []
+
+    while offset < len(dados):
+
+        # Ler os 2 bytes do campo opcional
+        campo = (dados[offset] << 8) | dados[offset + 1]
+
+        # Primeiro bit: existem mais tópicos?
+        mais_topicos = (campo >> 15) & 1
+
+        # Últimos 15 bits: comprimento
+        tamanho = campo & 0b0111111111111111
+
+        offset += 2
+
+        # Extrair tópico
+        topico_bytes = dados[offset:offset + tamanho]
+
+        if len(topico_bytes) != tamanho:
+            raise ValueError("Tópico incompleto")
+
+        topico = interpretar_caracteres(topico_bytes)
+
+        offset += tamanho
+
+        opcoes.append({
+            "mais_topicos": mais_topicos,
+            "tamanho_topico": tamanho,
+            "topico": topico
+        })
+
+        if mais_topicos == 0:
+            break
+
+    return opcoes
+
+def constroiAckMessage(identificador,qos):
+    return
+
+def controiMessage(es,ps,rs,cs,to,qos,close,id,topico,porta):
+    return
+
+
+def receberBytes(client_socket, quantidade):
+    buffer = bytearray()
+
+    while len(buffer) < quantidade:
+        dados = client_socket.recv(quantidade - len(buffer))
+
+        if not dados:
+            raise ConnectionError("Ligação TCP terminada")
+
+        buffer.extend(dados)
+
+    return buffer
+
+
+def recebeMensagemSubCast(client_socket):
+
+    # Receber os 2 bytes que indicam o tamanho total
+    mensagem = receberBytes(client_socket, 2)
+
+    tamanhoTotal = util.traduzInt(mensagem, 16)
+
+    if tamanhoTotal < SUBCAST_HEADER_SIZE:
+        raise ValueError("Tamanho de mensagem inválido")
+
+    # Receber os restantes bytes
+    restantes = receberBytes(client_socket, tamanhoTotal - 2)
+
+    mensagem.extend(restantes)
+
+    return mensagem
 

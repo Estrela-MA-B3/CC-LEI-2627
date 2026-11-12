@@ -60,7 +60,7 @@ def interpretar_metrica(leitor):
     )
 
 
-def interpretar_cabecalho_aplicacional(dados):
+def interpretar_EventCast(dados):
 
     leitor = LeitorBits(dados)
 
@@ -152,3 +152,9 @@ def interpretar_cabecalho_aplicacional(dados):
         )
 
     return resultado
+
+def constroiAckMessage(message_id,identificador):
+    return
+
+def constroiMessage(topico,metrica,message_id):
+    return
