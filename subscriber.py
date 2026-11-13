@@ -19,7 +19,7 @@ class ConfigSub(TypedDict):
 # SUBSCRIBER
 # ==================================================
 
-class Publisher:
+class Subscriber:
 
     def __init__(self, config:ConfigSub):
         self.id:int = config["id"]
