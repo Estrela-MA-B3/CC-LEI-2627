@@ -1,160 +1,87 @@
 
-class LeitorBits:
-
-    def __init__(self, dados):
-        self.dados = dados
-        self.posicao = 0
-        self.limite = len(dados) * 8
-
-    def ler_bits(self, quantidade):
-
-        if self.posicao + quantidade > self.limite:
-            raise ValueError("Dados insuficientes")
-
-        valor = 0
-
-        for _ in range(quantidade):
-
-            byte_atual = self.dados[self.posicao // 8]
-
-            pos_bit = 7 - (self.posicao % 8)
-
-            bit = (byte_atual >> pos_bit) & 1
-
-            valor = (valor << 1) | bit
-
-            self.posicao += 1
-
-        return valor
-
-    def ler_bytes(self, quantidade):
-
-        resultado = bytearray()
-
-        for _ in range(quantidade):
-            resultado.append(self.ler_bits(8))
-
-        return bytes(resultado)
-
-
-def interpretar_caracteres(dados):
-    """
-    Interpretação provisória do tópico.
-    """
-    return dados.decode("utf-8")
-
-
-def interpretar_metrica(leitor):
-    """
-    Função auxiliar para interpretar o valor da métrica.
-
-    A implementação será definida quando for conhecido
-    o tipo de dados utilizado.
-
-    A função deverá ler os bits correspondentes à métrica
-    e devolver o respetivo valor.
-    """
-
-    raise NotImplementedError(
-        "Tipo de dados da métrica ainda não definido"
+def interpretarEventCast(dados: bytes) -> tuple[bool, int, int, int, str, str]:
+    posicao = 0
+    # 1. FLAGS (8 bits)
+    flags = dados[posicao]
+    posicao += 1
+    # ACK: bit 7
+    ack = bool((flags >> 7) & 1)
+    # QoS: bit 6
+    # 0 = QoS 1
+    # 1 = QoS 2
+    qos = ((flags >> 6) & 1) + 1
+    # 2. MESSAGE_ID (16 bits)
+    message_id = int.from_bytes(dados[posicao:posicao + 2],byteorder="big")
+    posicao += 2
+    # 3. IDENTIFICADOR (8 bits)
+    identificador = dados[posicao]
+    posicao += 1
+    if len(dados) > 4:
+        # 4. TAMANHO DO TÓPICO (8 bits)
+        tamanho_topico = dados[posicao]
+        posicao += 1
+        # 5. TÓPICO
+        topico = dados[posicao:posicao + tamanho_topico].decode("utf-8")
+        posicao += tamanho_topico
+        if len(dados) > 4 + tamanho_topico:
+            # 6. TAMANHO DA MÉTRICA (8 bits)
+            tamanho_metrica = dados[posicao]
+            posicao += 1
+            # 7. MÉTRICA
+            metrica = dados[posicao:posicao + tamanho_metrica].decode("utf-8")
+        else:
+            metrica = ""
+    else:
+        topico = ""
+        metrica = ""
+    return (
+        ack,
+        qos,
+        message_id,
+        identificador,
+        topico,
+        metrica
     )
 
+def constroiMessage(ack: bool,qos: int,message_id: int,identificador: int,topico: str,metrica: str) -> bytes:
 
-def interpretar_EventCast(dados):
+    # CONVERTER STRINGS PARA UTF-8
+    topico_bytes = topico.encode("utf-8")
+    metrica_bytes = metrica.encode("utf-8")
+    # CONSTRUIR FLAGS
+    # Bit 7 = ACK
+    # Bit 6 = QoS (0 = QoS 1, 1 = QoS 2)
+    # Bits 5-0 = Reservados (0)
+    flags = (
+        (int(ack) << 7) |
+        ((qos-1)  << 6)
+    )
+    mensagem = bytearray()
+    # 1. FLAGS (8 bits)
+    mensagem.append(flags)
+    # 2. MESSAGE_ID (16 bits)
+    mensagem.extend(message_id.to_bytes(2, byteorder="big"))
+    # 3. IDENTIFICADOR (8 bits)
+    mensagem.append(identificador)
+    if len(topico) > 0:
+        # 4. TAMANHO DO TÓPICO (8 bits)
+        mensagem.append(len(topico_bytes))
+        # 5. TÓPICO
+        mensagem.extend(topico_bytes)
+        if len(metrica) > 0:
+            # 6. TAMANHO DA MÉTRICA (8 bits)
+            mensagem.append(len(metrica_bytes))
+            # 7. MÉTRICA
+            mensagem.extend(metrica_bytes)
+    return bytes(mensagem)
 
-    leitor = LeitorBits(dados)
+def constroiAckMessage(message_id: int,identificador: int,topico:str) -> bytes:
 
-    # --------------------------------
-    # MESSAGE ID
-    # --------------------------------
-
-    message_id = leitor.ler_bits(MESSAGE_ID_BITS)
-
-    # --------------------------------
-    # ACK
-    # --------------------------------
-
-    ack = leitor.ler_bits(ACK_BITS)
-
-    # --------------------------------
-    # NUMERO DE SEQUENCIA
-    # --------------------------------
-
-    sequence_number = leitor.ler_bits(SEQUENCE_BITS)
-
-    # --------------------------------
-    # LENGTH
-    # --------------------------------
-
-    length = leitor.ler_bits(LENGTH_BITS)
-
-    # O length representa bytes da secção
-    # de opções que vem a seguir.
-
-    fim_opcoes = leitor.posicao + (length * 8)
-
-    if fim_opcoes > len(dados) * 8:
-        raise ValueError("Dados aplicacionais incompletos")
-
-    # Limitar a leitura à secção de opções
-    leitor.limite = fim_opcoes
-
-    resultado = {
-        "message_id": message_id,
-        "ack": ack,
-        "sequence_number": sequence_number,
-        "length": length,
-        "opcoes": []
-    }
-
-    # --------------------------------
-    # INTERPRETAR OPCOES
-    # --------------------------------
-
-    while leitor.posicao < fim_opcoes:
-
-        # Bit que indica se existe outra opção
-        mais_opcoes = leitor.ler_bits(1)
-
-        # Comprimento do tópico (7 bits)
-        tamanho_topico = leitor.ler_bits(TOPIC_LENGTH_BITS)
-
-        # Ler bytes do tópico
-        topico_bytes = leitor.ler_bytes(tamanho_topico)
-
-        topico = interpretar_caracteres(topico_bytes)
-
-        # --------------------------------
-        # VALOR DA METRICA
-        # --------------------------------
-
-        metrica = interpretar_metrica(leitor)
-
-        opcao = {
-            "mais_opcoes": mais_opcoes,
-            "tamanho_topico": tamanho_topico,
-            "topico": topico,
-            "metrica": metrica
-        }
-
-        resultado["opcoes"].append(opcao)
-
-        # Se não existirem mais opções, terminar
-        if mais_opcoes == 0:
-            break
-
-    # Verificar se a secção foi interpretada
-    # sem ultrapassar o comprimento declarado
-
-    if leitor.posicao != fim_opcoes:
-        raise ValueError(
-            "Comprimento das opções inconsistente"
-        )
-
-    return resultado
-
-def constroiAckMessage(message_id,identificador):
-    return
-
-def constroiMessage(topico,message_id):
-    return
+    return constroiMessage(
+        ack=True,
+        qos=1,
+        message_id=message_id,
+        identificador=identificador,
+        topico=topico,
+        metrica=""
+    )

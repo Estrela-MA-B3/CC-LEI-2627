@@ -3,56 +3,74 @@ import threading
 import time
 import util
 import eventCast
-import subCast
+import subControl
+
+from typing import TypedDict
+
+class ConfigSub(TypedDict):
+    id: int
+    broker_control: tuple[str, int]
+    log: str
+    duration: int
+    subscribe: list[tuple[str, int]]
+    at: list[tuple[int, bool, str, int]]
+
+# ==================================================
+# SUBSCRIBER
+# ==================================================
 
 class Publisher:
 
-    def __init__(self, config):
-        self.id = -1
+    def __init__(self, config:ConfigSub):
+        self.id:int = config["id"]
         self.inicio = 0.0
         #Vamos assumir que é (ip,porta)
-        self.broker_control = config["broker_control"]
-        self.broker_data = (config["broker_control"][0],-1)
-        self.log = config["log"]
-        self.duration = config["duration"]
+        self.broker_control: tuple[str, int] = config["broker_control"]
+        self.broker_data: tuple[str, int] = (config["broker_control"][0],-1)
+        self.log:str = config["log"]
+        self.duration: int = config["duration"]
         #Vamos assumir que subscribe é uma lista de (filtro, QoS)
-        self.subscribe = config["subscribe"]
+        self.subscribe : list[tuple[str, int]] = config["subscribe"]
         #Vamos assumir que é uma lista de (tempo,True=subscribe ou false=unsubscribe (1 ou 0), topico, qos (apenas usado no True)) neste momento não dividimos mas depois pode ser dividido
-        self.actions = config["at"]
+        self.actions: list[tuple[int, bool, str, int]] = config["at"]
         self.running = True
-        self.messages = {}
+        self.messages:dict[str,dict[str,dict[str,set[int]]]] = {}
         self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.control_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
-        self.data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.data_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
-        self.data_socket.bind(('', 0))
-        self.data_port = self.data_socket.getsockname()[1]
+
+    # ==================================================
+    # CICLO PRINCIPAL
+    # ==================================================
 
     def executar(self):
+            thread_list:list[threading.Thread] = []
+            data_socket:socket.socket
             try:
                 self.inicio = time.monotonic()
-                #Enviar a primeira mensagem com EstablishConnection para receber o id
+                #Enviar a primeira mensagem e recebe a mensagem para receber qual a portaUDP do broker
+                data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                data_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+                data_socket.bind(('', 0))
+                data_port = data_socket.getsockname()[1]
                 self.control_socket.connect(self.broker_control)
-                mensagem = subCast.controiMessage(True,False,True,False,False,self.subscribe[0][1],False,0,self.subscribe[0][0],self.data_port)
+                mensagem = subControl.controiMessage(True,False,True,False,False,self.subscribe[0][1],self.id,self.subscribe[0][0],data_port)
                 self.control_socket.sendall(mensagem)
-                resposta = subCast.recebeMensagemSubCast(self.control_socket)
-                tamanhoTotal, es, ps, rs, cs, to, QoS, close, identificador, porta, topico = subCast.interpretar_SubCast(resposta)
-                self.id = identificador
-                self.broker_data[1] = porta
-                #Enviar caso tenha mais registo de publicacao para fazer envia uma de cada vez, sinalizando qual a última atraves do valor de close
-                for subscricao in self.subscribe[1:]: 
-                    mensagem = subCast.controiMessage(False,True,True,False,False,subscricao[1],False,self.id,subscricao[0],self.data_port)
-                    self.control_socket.sendall(mensagem)
-                    resposta = subCast.recebeMensagemSubCast(self.control_socket)
-                thread_list = []
+                resposta = subControl.recebeMensagemSubControl(self.control_socket)
+                tamanhoTotal, udp, ps, rs, cs, to, QoS, identificador, porta, topico = subControl.interpretar_SubControl(resposta)
+                self.broker_data = (self.broker_data[0],porta)
+                thread = threading.Thread(target=self.cicloUDP,args=(data_socket,)) 
+                thread_list.append(thread)
+                thread.start()
+                #Caso tenha mais subscricoes estas são feitas paralelamente em varias threads
+                for subscricao in self.subscribe[1:]:
+                    thread = threading.Thread(target=self.acaoProgramada,args=(0,True,subscricao[0],subscricao[1])) 
+                    thread_list.append(thread)
+                    thread.start()
                 #Cria uma thread para cada ação
                 for acao in self.actions:
                     thread = threading.Thread(target=self.acaoProgramada,args=(acao[0],acao[1],acao[2],acao[3])) 
                     thread_list.append(thread)
                     thread.start()
-                #Inicia a thread que recebe as metricas
-                thread_UDP = threading.Thread(target=self.cicloUDP)
-                thread_UDP.start()
                 #Adormece até ao momento de terminar e depois termina
                 time.sleep(self.duration-time.monotonic()+self.inicio)
                 self.running=False
@@ -61,62 +79,83 @@ class Publisher:
                 print(f"Erro: {e}")
             
             finally:
-                self.data_socket.close()
                 self.control_socket.close()
-                thread_UDP.join()
                 for thread in thread_list:
                     thread.join()
 
-    def acaoProgramada(self,tempo,tipo,topico,qos):
+    # ===================================================
+    # FUNCAO DE THREAD - CRIA SOCKET/SUBSCREVE/CICLO_UDP
+    # ===================================================
+
+    def acaoProgramada(self,tempo :int,tipo : bool,topico : str,qos : int):
+        data_socket = None
         try:
             #Constroi a mensagem dependendo se é de subscricao ou publicacao
-            mensagem = subCast.controiMessage(False,False,True,False,False,qos,False,self.id,topico,self.data_port) if tipo else subCast.controiMessage(False,False,False,True,False,0,False,self.id,topico,self.data_port)
+            data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            data_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+            data_socket.bind(('', 0))
+            data_port = data_socket.getsockname()[1]
+            rs = tipo
+            cs = not tipo
+            mensagem = subControl.controiMessage(True,False,rs,cs,False,qos,self.id,topico,data_port) 
             #Adormece a thread até que esteja no momento de atuar
             time.sleep(tempo-time.monotonic()+self.inicio)
             #Envia a mensagem e recebe resposta
             self.control_socket.sendall(mensagem)
-            resposta = subCast.recebeMensagemSubCast(self.control_socket)
-            if tipo: self.subscribe.append((topico,qos))
-            else: self.subscribe = [(filtro, nivel_qos) for filtro, nivel_qos in self.subscribe if filtro != topico]
-        except OSError as e:
-            raise e
+            if tempo:
+                if tipo: self.subscribe.append((topico,qos))
+                else: self.subscribe = [(filtro, nivel_qos) for filtro, nivel_qos in self.subscribe if filtro != topico]
+            self.cicloUDP(data_socket)
+        except OSError:
+            pass
+        finally:
+            if data_socket is not None: data_socket.close()
 
-    def cicloUDP(self):
+    # ================================================================================
+    # CICLO_UDP - RESPONSAVEL POR RECEBER METRICAS E CRIAR THREADS PARA O TRATAMENTO
+    # ================================================================================
+
+    def cicloUDP(self, data_socket:socket.socket):
+        data_socket.settimeout(1.0)
         while self.running:
             try:
-                mensagem, addr = self.data_socket.recvfrom(2048)
-                thread = threading.Thread(target=self.tratamentoEventCast,args=(mensagem, addr))
+                mensagem, addr = data_socket.recvfrom(2048)
+                thread = threading.Thread(target=self.tratamentoEventCast,args=(mensagem, addr,data_socket))
                 thread.start()
+            except socket.timeout:
+                pass
             except OSError as e:
-                if self.running: self.running=False
                 raise e
 
-    def tratamentoEventCast(self,mensagem,addr):
-        ack, qos, message_id, identificador, topico, metrica = eventCast.interpretar_EventCast(mensagem)
-        self.enviaACKEventCast(message_id,addr)
-        self.regista_mensagem(message_id,identificador,topico,metrica,qos)
-        
-        return
+    # ===================================================
+    # RECEBE UMA MENSAGEM COM METRICA E FAZ O TRATAMENTO 
+    # ===================================================
 
-    def enviaACKEventCast(self,message_id, addr):
-        ack_message = eventCast.constroiAckMessage(message_id,self.id)
+    def tratamentoEventCast(self,mensagem:bytes,addr:tuple[str,int],data_socket:socket.socket):
         try:
-            self.data_socket.sendto(ack_message,addr)
-        except OSError as e:
+            ack, qos, message_id, identificador, topico, metrica = eventCast.interpretarEventCast(mensagem)
+            ack_message = eventCast.constroiAckMessage(message_id,self.id,topico)
+            data_socket.sendto(ack_message,addr)
+            self.regista_mensagem(message_id,identificador,topico,metrica,qos)
+        except OSError:        
             return
+        
+    # ==================================================
+    # REGISTA UMA MENSAGEM NA LOG - VERIFICA QOS
+    # ==================================================
 
-    def regista_mensagem(self,identificador,message_id,topico,metrica,qos):
+    def regista_mensagem(self,identificador:int,message_id:int,topico:str,metrica:str,qos:int):
         try:
             qosEfetivo = self.encontraQoS(topico,qos)
             regiao, estacao, metrica = topico.split("/")
-            set = self.messages.setdefault(regiao, {}).setdefault(estacao, {}).setdefault(metrica, set())
-            if qosEfetivo == 2 and message_id in set: return
+            set_registo = self.messages.setdefault(regiao, {}).setdefault(estacao, {}).setdefault(metrica, set())
+            if qosEfetivo == 2 and message_id in set_registo: return
             util.registaLog(self.log, identificador, topico, message_id)
-            set.add(message_id)
-        except Exception as e:
+            set_registo.add(message_id)
+        except Exception:
             return
 
-    def encontraQoS(self,topico,qos):
+    def encontraQoS(self,topico:str,qos:int):
         if qos == 1: return qos
         for filtro,filtro_qos in self.subscribe:
             if (util.filtroCorresponde(filtro,topico)) and filtro_qos == 2: return 2

@@ -1,6 +1,6 @@
 import time 
 
-def traduzInt (mensagem,n):
+def traduzInt (mensagem:bytearray,n:int)->int:
         if n == 0:
             return 0
         if n < 0 or n > len(mensagem) * 8:
@@ -13,15 +13,15 @@ def traduzInt (mensagem,n):
         bits_sobra = (num_bytes * 8) - n
         return valor >> bits_sobra
 
-def interpretar_String(dados, n):
+def interpretar_String(dados:bytearray, n:int)->str:
     return dados[:n].decode("utf-8")
 
-def filtroCorresponde(filtro, topico):
+def filtroCorresponde(filtro:str, topico:str)->bool:
     if filtro.endswith("/*"):
         return topico.startswith(filtro[:-1])
     return filtro == topico
 
-def registaLog(file_path, identificador, topico, message_id):
+def registaLog(file_path:str, identificador:int, topico:str, message_id:int):
             timestamp_ms = time.time_ns() // 1_000_000
         
             with open(file_path, "a", encoding="utf-8") as ficheiro:

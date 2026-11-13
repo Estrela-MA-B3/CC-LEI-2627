@@ -1,9 +1,7 @@
-Cabeçalho UDP
-
-Flags
+Flags - 1 bit cada
 1) ACK - 1 se está confirmar a receção 0 caso contrário
 2) Qos 
-
+6bits reservados para outra coisa -> Podiam ser usados para aumentar o range de Message_id (exemplo)
 Message_id 16bits - não varia durante todo o percurso 
 Identificador 8bits - usado pelo broker para fazer a gestão dos ACKs dos subscritores e dos envios dos publishers
 Payload x bytes

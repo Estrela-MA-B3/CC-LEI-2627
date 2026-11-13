@@ -2,8 +2,20 @@
 import socket
 import threading
 import time
-import subCast
+import subControl
 import eventCast
+from typing import TypedDict
+
+# ==================================================
+# TIPO DO CONFIG
+# ==================================================
+
+class ConfigBroker(TypedDict):
+    bind: int
+    control_port: int
+    data_port: int
+    duration: int
+    evict_after: int
 
 # ==================================================
 # CODIGOS DE RETORNO
@@ -24,24 +36,24 @@ ERRO_SUBSCRICAO_INEXISTENTE = -3
 class RegionNode:
     def __init__(self):
         # Subscritores de "regiao/*"
-        self.subscribers = {}  # {subscriber_id: qos}
-        self.children = {}     # {estacao: StationNode}
+        self.subscribers:dict[int,int] = {}  # {subscriber_id: qos}
+        self.children:dict[str,StationNode] = {}     # {estacao: StationNode}
 
 
 class StationNode:
     def __init__(self):
         # Subscritores de "regiao/estacao/*"
-        self.subscribers = {}  # {subscriber_id: qos}
-        self.children = {}     # {metrica: TopicLeaf}
+        self.subscribers:dict[int,int] = {}  # {subscriber_id: qos}
+        self.children:dict[str,TopicLeaf] = {}     # {metrica: TopicLeaf}
 
 
 class TopicLeaf:
-    def __init__(self, qos):
+    def __init__(self, qos:int):
         # QoS definida no registo do topico
         self.qos = qos
-        self.messages = {}
+        self.messages:dict[int, dict[int, tuple[float, tuple[str, int]]]] = {}
         # Subscritores do topico especifico
-        self.subscribers = {}  # {subscriber_id: qos}
+        self.subscribers:dict[int,int] = {}  # {subscriber_id: qos}
 
 # ==================================================
 # BROKER
@@ -49,7 +61,7 @@ class TopicLeaf:
 
 class Broker:
 
-    def __init__(self, broker_id, config):
+    def __init__(self, broker_id:int, config:ConfigBroker):
         self.id = broker_id
         self.bind = config["bind"]
         self.control_port = config["control_port"]
@@ -58,13 +70,13 @@ class Broker:
         self.evic_after = config["evict_after"]
         # Dicionário onde vou manter os tópicos: Região -> Estação -> Métrica -> Dict(Subscribers,Qos)/Qos Publisher/Acks: Dicionario : Message_id -> (Lista de Waiting Acks)
         #Usar a presença de Message_id para verificar se a mensagem já foi enviada uma vez, isto é, se o broker já recebeu aquele message_id, ao procurar pelos subscritores a mandar, só recolhe os que tem QoS = 1 
-        self.topics = {}
-        # Dicionário de subscriber id -> Endereço
-        self.subscritores = {}
+        self.topics:dict[str,RegionNode] = {}
+        # Dicionário de subscriber id -> (Endereço,{topico: portaUDP})
+        self.subscritores:dict[int,tuple[str,dict[str,int]]] = {}
         # Dicionário de publisher id -> Endereço
-        self.publishers = {}
+        self.publishers:dict[int,list[str]] = {}
 
-        self.running = True
+        self.running:bool = True
         self.erro_tcp = None
         self.erro_udp = None
 
@@ -84,6 +96,8 @@ class Broker:
         self.running = True
         self.erro_tcp = None
         self.erro_udp = None
+        tcp_thread = None 
+        udp_thread = None
 
     
         try:
@@ -123,8 +137,8 @@ class Broker:
             self.control_socket.close()
             self.data_socket.close()
     
-            tcp_thread.join()
-            udp_thread.join()
+            if tcp_thread is not None: tcp_thread.join()
+            if udp_thread is not None: udp_thread.join()
 
     # ==================================================
     # FUNÇÃO DE CICLO DOS SOCKETS
@@ -165,38 +179,35 @@ class Broker:
     # TRATAMENTO DE UMA MENSAGEM RECEBIDA
     # ==================================================
 
-    def tratamentoSubControl(self, client_socket, client_address):
+    def tratamentoSubControl(self, client_socket:socket.socket, client_address:tuple[str,int]):
         try:
-            client_socket.settimeout(self.evic_after*3)
             while True:
-                buffer = subCast.recebeMensagemSubCast(client_socket)
-                tamanhoTotal, es, ps, rs, cs, to, QoS, identificador, porta, topico = subCast.interpretar_SubCast(buffer)
-                if (es): 
-                    endereco = (client_address[0],porta)
-                    identificador = self.atribuiIdentificador(ps,endereco)
+                buffer = subControl.recebeMensagemSubControl(client_socket)
+                tamanhoTotal, udp, ps, rs, cs, to, QoS, identificador, porta, topico = subControl.interpretar_SubControl(buffer) 
                 if (rs and topico):
-                    if (ps): self.registoPub(topico,QoS)
-                    else: qos = self.subscricaoSub(identificador,topico,QoS)
+                    if (ps): self.registoPub(identificador,topico,QoS)
+                    else: self.subscricaoSub(identificador,topico,QoS,porta,client_address[0])
                 if (cs): self.cancelarSubscricao(identificador,topico)
                 if (to): self.terminacaoOrdenada(ps,identificador)
-                self.confirmaSubControl(client_socket,identificador,qos)
+                # So enviamos uma mensagem se estiver a pedir a porta UDP ou se for uma subscricao para comunicar o qos
+                if (udp): self.mensagemSubControl(client_socket,self.id)
                 # Se foi gerada uma terminacao ordenada por parte do broker ao publisher ou ao subscriber ele deve terminar
                 if (not ps and (not identificador in self.subscritores)) or (ps and (not identificador in self.publishers) or to):
                     break
         except OSError as e:
-            print(e)
+            pass
         finally: 
             client_socket.close()
 
-    def confirmaSubControl(self, client_socket,identificador,qos):
+    def mensagemSubControl(self, client_socket:socket.socket,identificador:int):
         try:
-            ack_message = subCast.constroiAckMessage(identificador,qos)
+            ack_message = subControl.constroiAckMessage(identificador,self.data_port)
             client_socket.sendall(ack_message)
         except OSError as e:
             raise e
 
-    def tratamentoEventCast(self, mensagem, addr):
-        ack, qos, message_id, identificador, topico, metrica = eventCast.interpretar_EventCast(mensagem)
+    def tratamentoEventCast(self, mensagem:bytes, addr:tuple[str,int]):
+        ack, qos, message_id, identificador, topico, metrica = eventCast.interpretarEventCast(mensagem)
         # Estamos a receber um ACK de um subscritor tem de ter o message_id, identificador e topico, neste caso, metrica = null
         # Preferivel: Ler o endereço de onde veio a mensagem e map é feito com base no endereço do subscritor: Menos dados enviado pela rede mas torna o campo identificador inutil, dado que podemos sempre identificar o subscritor pelo par (IP,Porta) origem do pacote dado pelo addr 
         if (ack):
@@ -210,84 +221,54 @@ class Broker:
                             if identificador in ack_dic: del ack_dic[identificador]
         # Estamos a receber uma nova métrica de um publisher. Neste caso o identificador é o do publisher que acaba por ser também inutil
         else:
-            self.enviaACKEventCast(message_id,addr) # SIM PASSAR PARA UMA NOVA THREAD.
+            thread_ack = threading.Thread(target=self.enviaACKEventCast,args=(message_id,addr))
+            thread_ack.start()
             #Operação com Lock para ver quem são os destinatários a enviar!
             subscritores, ack_dic = self.obterDestinatarios(topico,message_id)
+            if subscritores is None or ack_dic is None: return
             # Colocar Lock na estrtutura para não dar erros de escrita vs leitura
             for id_sub in subscritores:
                 #Problemas com lock aqui tambem -> Estrutura de endereços partilhada por todas as threads
-                if id_sub in self.subscritores: # Muito ineficiente mas ao menos ajuda a filtrar casos onde ele seja terminado
-                    endereco = self.subscritores[id_sub]["endereco"]
-                    self.enviaPublicacao(endereco,mensagem)
-                    ack_dic[id_sub] = time.monotonic()
+                sub = self.subscritores.get(id_sub)
+                if sub is not None: 
+                    endIP = sub[0]
+                    porta = sub[1].get(topico)
+                    if porta is not None: 
+                        self.enviaPublicacao((endIP,porta),mensagem)
+                        ack_dic[id_sub] = (time.monotonic(),(endIP,porta))
             while not ack_dic:
                 time.sleep(1)
                 #Estamos a ignorar problemas de concorrencia entre receber um ACK e estar a reenviar, precisaria de um lock -> Devemos adquirir lock para copiar quem vamos enviar e depois enviar, mas o lock deve ser o mais curto possivel para não bloquear a receção de ACKS
-                for id_sub, tempoEspera in ack_dic.items():
-                        endereco = self.subscritores[id_sub]["endereco"]
-                        if time.monotonic() - tempoEspera > self.evic_after:
-                            # O tempo máximo de espera por uma resposta acabou -> Aciona a terminação do sub geral e remove-o da lista de espera
-                            # Problema caso estejamos a enviar mais do que uma métrica para este sub ele será removido completamente, contudo não é removido da lista de acks de cada topico
+                for id_sub, tuplo in ack_dic.items():
+                        if time.monotonic() - tuplo[0] > self.evic_after:
                             thread = threading.Thread(target=self.terminacaoOrdenada,args=(False, id_sub))
                             thread.start()
                             del ack_dic[id_sub]
-                        else:
-                            self.enviaPublicacao(endereco,mensagem)
-        #Quando o ack_dic terminar signfica que já recebemos a confirmação de todos os subs ativos, ou seja, já terminados o processo de envio
+                        #Verifica se ele foi terminado ou se fez unsubscribe
+                        if id_sub not in self.subscritores or self.subscritores[id_sub][1].get(topico) is None: del ack_dic[id_sub]
+                        else: self.enviaPublicacao(tuplo[1],mensagem)
+            thread_ack.join()
         return
     
-        #Em caso de publicação verifica quantos fragmentos tem a publicação e se >1 cria uma thread que vai armazenar qual o fragmento recebido e enviar um ACK para a origem do número de segmentos continuos mais alto ja recebido. Depois verifica se já os tem todos, em caso afirmativo segue para a função de envio para o destino 
-        #Em caso de ACK regista na estrutura auxiliar de receção dos ACKS e elimina todos os fragmentos que ja foram confirmados até ao momento da estrutura (se já forem todos remove tambem o registo daquela mensagem da estrutura)
         
-
-
-    #PODIA FAZER UM MELHOR TRATAMENTO DE ERROS
-    def enviaPublicacao(self,endereco,mensagem):
+    def enviaPublicacao(self,endereco:tuple[str,int],mensagem:bytes):
         try:
             self.data_socket.sendto(mensagem,endereco)
         except OSError as e:
             return
 
-    def enviaACKEventCast(self,message_id, addr):
-        ack_message = eventCast.constroiAckMessage(message_id,0)
+    def enviaACKEventCast(self,message_id:int, addr:tuple[str,int]):
+        ack_message = eventCast.constroiAckMessage(message_id,self.id,"")
         try:
             self.data_socket.sendto(ack_message,addr)
         except OSError as e:
             return
 
     # ==================================================
-    # ESTABELECIMENTO DE SESSÃO (ATRIBUIÇÃO DO IDENTIFICADOR)
-    # ==================================================
-
-    def atribuiIdentificador(self,ps, ip, porta): 
-        dicionario = self.publishers if ps else self.subscritores
-        identificador = len(dicionario)+1
-        if ps: dicionario[identificador]=[]
-        else: dicionario[identificador]= {
-            "endereco": (ip,porta),
-            "topicos": []
-            }
-        return identificador
-                
-
-    # ==================================================
     # REGISTO DE PUBLICACAO / TOPICO
     # ==================================================
 
-    def registoPub(self,publisher_id, topico, qos):
-        """
-        Regista um topico na arvore.
-
-        Recebe:
-            topico: regiao/estacao/metrica
-            qos: QoS do topico (1 ou 2)
-
-        Retorna:
-            SUCESSO
-            TOPICO_JA_EXISTE
-            ERRO_TOPICO_INVALIDO
-        """
-
+    def registoPub(self,publisher_id:int, topico:str, qos:int)->int:
         partes = topico.split("/")
 
         if len(partes) != 3 or any(not parte or parte == "*" for parte in partes):
@@ -324,7 +305,7 @@ class Broker:
     # SUBSCRICAO
     # ==================================================
 
-    def subscricaoSub(self, subscriber_id, topico, qos):
+    def subscricaoSub(self, subscriber_id:int, topico:str, qos:int, portaUDP:int, endIP:str)->int:
         partes = topico.split("/")
 
         # Subscrição com formato inválido 
@@ -363,18 +344,15 @@ class Broker:
         #Regista a subscrição no dicionário onde coloca o id do subscritor como chave e qos como valor
         node.subscribers[subscriber_id] = qos
         #Atualiza as subscricoes do subscriber 
-        self.subscritores[subscriber_id]["topicos"].append(topico)
+        tuplo = self.subscritores.setdefault(subscriber_id, (endIP,{}))
+        tuplo[1][topico] = portaUDP
     
         return 0
 
     # ==================================================
     # CANCELAMENTO DE SUBSCRICAO
     # ==================================================
-    def cancelarSubscricao(self, subscriber_id, topico):
-        """
-        Cancela uma subscricao especifica.
-        """
-
+    def cancelarSubscricao(self, subscriber_id:int, topico:str)->int:
         partes = topico.split("/")
 
         # Subscrição com formato inválido 
@@ -413,8 +391,8 @@ class Broker:
         #Retira Subscrição da Árvore de Subscrições
         del node.subscribers[subscriber_id]
 
-        #Reduz o número de subscrições ativas na tabela de endereços e portas
-        self.subscritores[subscriber_id]["topicos"].remove(topico)
+        #Remove a subscricao do dicionario de portas do subscritor
+        self.subscritores[subscriber_id][1].pop(topico, None)
 
         return SUCESSO
 
@@ -422,7 +400,7 @@ class Broker:
     # TERMINACAO ORDENADA
     # ==================================================
 
-    def terminacaoOrdenada(self, ps, identificador):
+    def terminacaoOrdenada(self, ps:bool, identificador:int)->int:
     
         dicionario = self.publishers if ps else self.subscritores
     
@@ -434,32 +412,32 @@ class Broker:
             topicos = dicionario[identificador]
     
             for topico in topicos:
-                regiao, estacao, metrica = topico.split("/")
+                regiao, estacao, metrica = topico.split("/") # type: ignore
     
-                region_node = self.topics.get(regiao)
+                region_node = self.topics.get(regiao) # type: ignore
                 if region_node is None:
                     continue
     
-                station_node = region_node.children.get(estacao)
+                station_node = region_node.children.get(estacao) # type: ignore
                 if station_node is None:
                     continue
     
                 # Remover o tópico
-                station_node.children.pop(metrica, None)
+                station_node.children.pop(metrica, None) # type: ignore
     
                 # Remover estação se ficar vazia
                 if not station_node.children and not station_node.subscribers:
-                    region_node.children.pop(estacao, None)
+                    region_node.children.pop(estacao, None) # type: ignore
     
                 # Remover região se ficar vazia
                 if not region_node.children and not region_node.subscribers:
-                    self.topics.pop(regiao, None)
+                    self.topics.pop(regiao, None) # type: ignore
     
         # Caso seja um SUBSCRIBER
         else:
-            topicos = dicionario[identificador]["topicos"]
+            topicos = dicionario[identificador][1]
     
-            for topico in topicos:
+            for topico in list(topicos):
                 self.cancelarSubscricao(identificador,topico)
     
         # Remover publisher ou subscriber do respetivo dicionário
@@ -473,18 +451,7 @@ class Broker:
     # PESQUISA DE DESTINATARIOS
     # ==================================================
 
-    def obterDestinatarios(self, topico, message_id):
-        """
-        Procura os subscritores interessados num topico.
-
-        A QoS da publicacao e obtida da folha.
-
-        Retorna:
-            {subscriber_id: qos_efetiva}
-
-        Cada subscritor aparece apenas uma vez.
-        """
-
+    def obterDestinatarios(self, topico:str, message_id:int)->tuple[list[int] | None,  dict[int, tuple[float, tuple[str, int]]] | None]:
         partes = topico.split("/")
         
         if len(partes) != 3 or any(not parte or parte == "*" for parte in partes):
@@ -513,13 +480,13 @@ class Broker:
         publication_qos = metric_node.qos
 
         # Acumular subscritores encontrados, eliminar duplicados e definir QoS em uso
-        matching_subscribers = {}
+        matching_subscribers:dict[int,int] = {}
 
-        nodes = [
+        nodes : list[RegionNode|StationNode|TopicLeaf] = [
             region_node,
             station_node,
             metric_node
-        ]
+        ]   
 
         for node in nodes:
             for subscriber_id, subscription_qos in node.subscribers.items():

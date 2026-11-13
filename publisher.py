@@ -1,85 +1,121 @@
 import socket 
 import threading
 import time
-import subCast
+import subControl
 import eventCast
 import util
+from typing import TypedDict
 
+class ConfigPub(TypedDict):
+    id: int
+    broker_control: tuple[str, int]
+    log: str
+    start_after: int
+    publish: list[tuple[str, int, int, int]]
+    drain: int
+
+# ==================================================
+# PUBLISHER
+# ==================================================
 
 class Publisher:
 
-    def __init__(self, config):
-        self.id = -1
-        self.inicio = 0.0
+    def __init__(self, config:ConfigPub):
+        self.id:int = config["id"]
+        self.inicio:float = time.monotonic()
         #Vamos assumir que é (ip,porta)
-        self.broker_control = config["broker_control"]
-        self.broker_data = (config["broker_control"][0],-1)
-        self.log = config["log"]
-        self.start_after = config["start_after"]
+        self.broker_control : tuple[str,int] = config["broker_control"]
+        self.broker_data : tuple[str,int] = (config["broker_control"][0],-1)
+        self.log :str = config["log"]
+        self.start_after :int= config["start_after"]
         #Vamos assumir que publish é uma lista de (topico, QoS, count, rate)
-        self.publish = config["publish"]
-        self.drain = config["drain"]
-        self.runningTCP = True
+        self.publish : list[tuple[str,int,int,int]]= config["publish"]
+        self.drain: int= config["drain"]
+        self.runningTCP:int = len(self.publish)
         self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.control_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
         
-        
+    # ==================================================
+    # CICLO PRINCIPAL
+    # ==================================================
+ 
     def executar(self):
+        thread_list: list[threading.Thread] = []
         try:
             #Enviar a primeira mensagem com EstablishConnection para receber o id
             self.control_socket.connect(self.broker_control)
-            close = True if len(self.publish)==1 else False
-            mensagem = subCast.controiMessage(True,True,True,False,False,self.publish[0][1],close,0,self.publish[0][0],0)
+            mensagem = subControl.controiMessage(True,True,True,False,False,self.publish[0][1],self.id,self.publish[0][0],0)
             self.control_socket.sendall(mensagem)
-            resposta = subCast.recebeMensagemSubCast(self.control_socket)
-            tamanhoTotal, es, ps, rs, cs, to, QoS, close, identificador, porta, topico = subCast.interpretar_SubCast(resposta)
-            self.id = identificador
-            self.broker_data[1] = porta
-            self.inicio = time.monotonic()
+            resposta = subControl.recebeMensagemSubControl(self.control_socket)
+            tamanhoTotal, es, ps, rs, cs, to, QoS, identificador, porta, topico = subControl.interpretar_SubControl(resposta)
+            self.broker_data = (self.broker_data[0],porta)
+            thread = threading.Thread(target=self.cicloUDP,args=(self.publish[0][0],self.publish[0][1],self.publish[0][2],self.publish[0][3]))
+            thread.start()
+            thread_list.append(thread)
+            self.runningTCP -=1
             #Enviar caso tenha mais registo de publicacao para fazer envia uma de cada vez, sinalizando qual a última atraves do valor de close
             for i in range(1,len(self.publish)): 
-                close = True if (i==len(self.publish)-1) else False
-                mensagem = subCast.controiMessage(False,True,True,False,False,self.publish[i][1],close,self.id,self.publish[i][0],0)
-                self.control_socket.sendall(mensagem)
-                resposta = subCast.recebeMensagemSubCast(self.control_socket)
+                thread = threading.Thread(target=self.cicloPublicacao,args=(self.publish[i][0],self.publish[i][1],self.publish[i][2],self.publish[i][3]))
+                thread.start()
+                thread_list.append(thread)
+
+            while(self.runningTCP>0):
+                time.sleep(1)
             self.control_socket.close()
-            self.runningTCP = False
-            thread_list = []
-            for publicacao in self.publish:
-                udp_thread = threading.Thread(target=self.cicloUDP,args=(publicacao[0],publicacao[1],publicacao[2],publicacao[3]))
-                thread_list.append(udp_thread)
-                udp_thread.start()
-            
+
         except Exception as e:
             print(f"Erro: {e}")
         
         finally:
-            if self.runningTCP: self.control_socket.close()
+            if self.runningTCP>0: self.control_socket.close()
             else: 
+
                 for thread in thread_list:
                     thread.join()
 
-    def cicloUDP(self,topico,QoS,count,rate):
+    # ==================================================
+    # FUNCAO DE THREAD - FAZ SUBSCRICAO/CICLO_UDP
+    # ==================================================
+
+    def cicloPublicacao(self,topico:str,qos:int,count:int,rate:int):
+        try:
+            mensagem = subControl.controiMessage(False,True,True,False,False,qos,self.id,topico,0)
+            self.control_socket.sendall(mensagem)
+            self.runningTCP -=1
+            self.cicloUDP(topico,qos,count,rate)
+        except OSError:
+            raise
+
+    # ==========================================================
+    # CICLO_UDP - RESPONSAVEL POR ENVIAR METRICAS COM THREADS
+    # ==========================================================
+
+    def cicloUDP(self,topico:str,qos:int,count:int,rate:int):
+        data_socket = None
         try:
             message_id = 1
             #Uma opção é cada thread teria o seu socket e recebia o seu ack do message_id
             data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             data_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
-            acks = {}
+            acks:dict[int,bool] = {}
             time.sleep(self.start_after-time.monotonic()+self.inicio)
             thread_ack = threading.Thread(target=self.recebeAcks,args=(acks,data_socket))
             thread_ack.start()
             while (count>0):
-                thread_send = threading.Thread(target=self.enviaMetrica,args=(topico,acks,data_socket,message_id))
+                thread_send = threading.Thread(target=self.enviaMetrica,args=(topico,acks,data_socket,message_id,qos))
                 thread_send.start()
                 count -= 1
                 time.sleep(rate)
         finally:
-            data_socket.close()
+            if data_socket is not None: data_socket.close()
 
-    def enviaMetrica(self,topico,acks,socket,message_id):
+    # ==================================================================
+    # FUNCAO DE THREAD - ENVIA UMA METRICA E RETRANSMITE SE NECESSÁRIO
+    # ==================================================================
+
+    def enviaMetrica(self,topico:str,acks:dict[int,bool],socket:socket.socket,message_id:int,qos:int):
         addr = self.broker_data
-        message = eventCast.constroiMessage(topico,message_id)
+        message = eventCast.constroiMessage(False,qos,message_id,self.id,topico,"")
         acks[message_id]=False
         socket.sendto(message,addr)
         inicio = time.monotonic()
@@ -89,9 +125,13 @@ class Publisher:
             socket.sendto(message,addr)
         return
 
-    def recebeAcks(self,acks,socket):
+    # ============================================================
+    # FUNCAO DE THREAD - RESPONSAVEL POR REGISTAR ACKS RECEBIDOS
+    # ============================================================
+
+    def recebeAcks(self,acks:dict[int,bool],socket:socket.socket):
         resposta, addr = socket.recvfrom(1024)
-        ack, qos, message_id, identificador, topico, metrica = eventCast.interpretar_EventCast(resposta)
+        ack, qos, message_id, identificador, topico, metrica = eventCast.interpretarEventCast(resposta)
         if ack and message_id in acks: acks[message_id] = True
 
     
