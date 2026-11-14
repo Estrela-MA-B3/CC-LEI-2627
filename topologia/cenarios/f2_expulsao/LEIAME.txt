@@ -1,0 +1,1 @@
+Fase 2/3: sub2 é congelado com SIGSTOP. Menos de 5 s → mantém a sessão e recebe tudo; mais de 5 s → é expulso. O sub1 não pode atrasar-se.

@@ -1,0 +1,1 @@
+Fase 1: 1 publicador, 1 broker, 1 subscritor, G1, sem perdas.
