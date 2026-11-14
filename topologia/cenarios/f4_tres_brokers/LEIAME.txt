@@ -1,0 +1,1 @@
+Fase 4: broker1 — broker2 — broker3 em linha. Publicações em broker1 e broker3, subscritores nos três; west/... não é subscrito por ninguém (custo do flooding); sub6 subscreve em broker3 depois do arranque.

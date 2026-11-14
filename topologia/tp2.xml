@@ -1,0 +1,220 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<scenario name="tp2.xml">
+  <networks>
+    <network id="5" name="sw1" type="SWITCH">
+      <position x="180.0" y="130.0"/>
+    </network>
+    <network id="6" name="sw2" type="SWITCH">
+      <position x="180.0" y="420.0"/>
+    </network>
+    <network id="7" name="sw3" type="SWITCH">
+      <position x="870.0" y="130.0"/>
+    </network>
+    <network id="8" name="sw4" type="SWITCH">
+      <position x="870.0" y="670.0"/>
+    </network>
+    <network id="9" name="sw5" type="SWITCH">
+      <position x="180.0" y="680.0"/>
+    </network>
+  </networks>
+  <devices>
+    <device id="1" name="r1" type="router">
+      <position x="320.0" y="250.0"/>
+      <services>
+        <service name="zebra"/>
+        <service name="OSPFv2"/>
+        <service name="OSPFv3"/>
+        <service name="IPForward"/>
+      </services>
+    </device>
+    <device id="2" name="r2" type="router">
+      <position x="720.0" y="250.0"/>
+      <services>
+        <service name="zebra"/>
+        <service name="OSPFv2"/>
+        <service name="OSPFv3"/>
+        <service name="IPForward"/>
+      </services>
+    </device>
+    <device id="3" name="r3" type="router">
+      <position x="720.0" y="550.0"/>
+      <services>
+        <service name="zebra"/>
+        <service name="OSPFv2"/>
+        <service name="OSPFv3"/>
+        <service name="IPForward"/>
+      </services>
+    </device>
+    <device id="4" name="r4" type="router">
+      <position x="320.0" y="550.0"/>
+      <services>
+        <service name="zebra"/>
+        <service name="OSPFv2"/>
+        <service name="OSPFv3"/>
+        <service name="IPForward"/>
+      </services>
+    </device>
+    <device id="10" name="pub1" type="PC">
+      <position x="60.0" y="60.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+    <device id="11" name="pub2" type="PC">
+      <position x="60.0" y="130.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+    <device id="12" name="pub3" type="PC">
+      <position x="60.0" y="200.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+    <device id="13" name="sub1" type="PC">
+      <position x="60.0" y="270.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+    <device id="14" name="sub2" type="PC">
+      <position x="60.0" y="330.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+    <device id="15" name="sub3" type="PC">
+      <position x="60.0" y="390.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+    <device id="16" name="sub4" type="PC">
+      <position x="60.0" y="450.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+    <device id="17" name="sub5" type="PC">
+      <position x="60.0" y="510.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+    <device id="18" name="sub6" type="PC">
+      <position x="60.0" y="570.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+    <device id="19" name="broker1" type="PC">
+      <position x="970.0" y="130.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+    <device id="20" name="broker2" type="PC">
+      <position x="970.0" y="670.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+    <device id="21" name="broker3" type="PC">
+      <position x="60.0" y="680.0"/>
+      <services>
+        <service name="DefaultRoute"/>
+      </services>
+    </device>
+  </devices>
+  <links>
+    <link node_one="1" node_two="2">
+      <interface_one id="0" name="eth0" mac="00:00:00:aa:01:00" ip4="10.0.11.1" ip4_mask="24"/>
+      <interface_two id="0" name="eth0" mac="00:00:00:aa:02:00" ip4="10.0.11.2" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="2" node_two="3">
+      <interface_one id="1" name="eth1" mac="00:00:00:aa:02:01" ip4="10.0.12.1" ip4_mask="24"/>
+      <interface_two id="0" name="eth0" mac="00:00:00:aa:03:00" ip4="10.0.12.2" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="3" node_two="4">
+      <interface_one id="1" name="eth1" mac="00:00:00:aa:03:01" ip4="10.0.13.1" ip4_mask="24"/>
+      <interface_two id="0" name="eth0" mac="00:00:00:aa:04:00" ip4="10.0.13.2" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="4" node_two="1">
+      <interface_one id="1" name="eth1" mac="00:00:00:aa:04:01" ip4="10.0.14.1" ip4_mask="24"/>
+      <interface_two id="1" name="eth1" mac="00:00:00:aa:01:01" ip4="10.0.14.2" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="1" node_two="5">
+      <interface_one id="2" name="eth2" mac="00:00:00:aa:01:02" ip4="10.0.1.1" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="1" node_two="6">
+      <interface_one id="3" name="eth3" mac="00:00:00:aa:01:03" ip4="10.0.2.1" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="2" node_two="7">
+      <interface_one id="2" name="eth2" mac="00:00:00:aa:02:02" ip4="10.0.3.1" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="3" node_two="8">
+      <interface_one id="2" name="eth2" mac="00:00:00:aa:03:02" ip4="10.0.4.1" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="4" node_two="9">
+      <interface_one id="2" name="eth2" mac="00:00:00:aa:04:02" ip4="10.0.5.1" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="10" node_two="5">
+      <interface_one id="0" name="eth0" mac="00:00:00:aa:0a:00" ip4="10.0.1.10" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="11" node_two="5">
+      <interface_one id="0" name="eth0" mac="00:00:00:aa:0b:00" ip4="10.0.1.11" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="12" node_two="5">
+      <interface_one id="0" name="eth0" mac="00:00:00:aa:0c:00" ip4="10.0.1.12" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="13" node_two="6">
+      <interface_one id="0" name="eth0" mac="00:00:00:aa:0d:00" ip4="10.0.2.31" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="14" node_two="6">
+      <interface_one id="0" name="eth0" mac="00:00:00:aa:0e:00" ip4="10.0.2.32" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="15" node_two="6">
+      <interface_one id="0" name="eth0" mac="00:00:00:aa:0f:00" ip4="10.0.2.33" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="16" node_two="6">
+      <interface_one id="0" name="eth0" mac="00:00:00:aa:10:00" ip4="10.0.2.34" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="17" node_two="6">
+      <interface_one id="0" name="eth0" mac="00:00:00:aa:11:00" ip4="10.0.2.35" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="18" node_two="6">
+      <interface_one id="0" name="eth0" mac="00:00:00:aa:12:00" ip4="10.0.2.36" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="19" node_two="7">
+      <interface_one id="0" name="eth0" mac="00:00:00:aa:13:00" ip4="10.0.3.20" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="20" node_two="8">
+      <interface_one id="0" name="eth0" mac="00:00:00:aa:14:00" ip4="10.0.4.20" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+    <link node_one="21" node_two="9">
+      <interface_one id="0" name="eth0" mac="00:00:00:aa:15:00" ip4="10.0.5.20" ip4_mask="24"/>
+      <options delay="0" bandwidth="0" per="0.0" dup="0" jitter="0" type="1" unidirectional="0"/>
+    </link>
+  </links>
+</scenario>

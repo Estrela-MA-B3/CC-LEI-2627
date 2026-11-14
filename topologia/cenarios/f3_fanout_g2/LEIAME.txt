@@ -1,0 +1,1 @@
+Fase 3: G1 vs G2, fan-out para 6 subscritores, seletividade, filtros sobrepostos (sub3), um tópico que ninguém subscreve, e at (sub6). Correr com e sem ./perda.sh L1 10.

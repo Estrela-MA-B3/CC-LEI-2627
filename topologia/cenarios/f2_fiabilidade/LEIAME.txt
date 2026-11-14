@@ -1,0 +1,1 @@
+Fase 2: burst de 400 publicações G1 a 20/s; correr com ./perda.sh L1 10.
