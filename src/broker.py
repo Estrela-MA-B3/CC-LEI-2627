@@ -4,18 +4,7 @@ import threading
 import time
 import subControl
 import eventCast
-from typing import TypedDict
-
-# ==================================================
-# TIPO DO CONFIG
-# ==================================================
-
-class ConfigBroker(TypedDict):
-    bind: int
-    control_port: int
-    data_port: int
-    duration: int
-    evict_after: int
+import configParser
 
 # ==================================================
 # CODIGOS DE RETORNO
@@ -61,7 +50,7 @@ class TopicLeaf:
 
 class Broker:
 
-    def __init__(self, broker_id:int, config:ConfigBroker):
+    def __init__(self, broker_id:int, config:configParser.ConfigBroker):
         self.id = broker_id
         self.bind = config["bind"]
         self.control_port = config["control_port"]

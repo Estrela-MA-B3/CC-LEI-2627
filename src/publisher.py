@@ -4,15 +4,7 @@ import time
 import subControl
 import eventCast
 import util
-from typing import TypedDict
-
-class ConfigPub(TypedDict):
-    id: int
-    broker_control: tuple[str, int]
-    log: str
-    start_after: int
-    publish: list[tuple[str, int, int, int]]
-    drain: int
+import configParser
 
 # ==================================================
 # PUBLISHER
@@ -20,7 +12,7 @@ class ConfigPub(TypedDict):
 
 class Publisher:
 
-    def __init__(self, config:ConfigPub):
+    def __init__(self, config:configParser.ConfigPublisher):
         self.id:int = config["id"]
         self.inicio:float = time.monotonic()
         #Vamos assumir que é (ip,porta)

@@ -4,16 +4,7 @@ import time
 import util
 import eventCast
 import subControl
-
-from typing import TypedDict
-
-class ConfigSub(TypedDict):
-    id: int
-    broker_control: tuple[str, int]
-    log: str
-    duration: int
-    subscribe: list[tuple[str, int]]
-    at: list[tuple[int, bool, str, int]]
+import configParser
 
 # ==================================================
 # SUBSCRIBER
@@ -21,7 +12,7 @@ class ConfigSub(TypedDict):
 
 class Subscriber:
 
-    def __init__(self, config:ConfigSub):
+    def __init__(self, config:configParser.ConfigSubscriber):
         self.id:int = config["id"]
         self.inicio = 0.0
         #Vamos assumir que é (ip,porta)
