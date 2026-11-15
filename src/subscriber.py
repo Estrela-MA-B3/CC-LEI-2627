@@ -5,6 +5,7 @@ import util
 import eventCast
 import subControl
 import configParser
+import readwritelock
 
 # ==================================================
 # SUBSCRIBER
@@ -13,6 +14,7 @@ import configParser
 class Subscriber:
 
     def __init__(self, config:configParser.ConfigSubscriber):
+        #DADOS
         self.id:int = config["id"]
         self.inicio = 0.0
         #Vamos assumir que é (ip,porta)
@@ -24,10 +26,17 @@ class Subscriber:
         self.subscribe : list[tuple[str, int]] = config["subscribe"]
         #Vamos assumir que é uma lista de (tempo,True=subscribe ou false=unsubscribe (1 ou 0), topico, qos (apenas usado no True)) neste momento não dividimos mas depois pode ser dividido
         self.actions: list[tuple[int, bool, str, int]] = config["at"]
+        self.messages:dict[str,dict[str,dict[str,tuple[readwritelock.Lock,set[int]]]]] = {}
+        #ESTADO
         self.running = True
-        self.messages:dict[str,dict[str,dict[str,set[int]]]] = {}
+        #SOCKET
         self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.control_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+        #LOCKS
+        self.runningLock = readwritelock.Lock()
+        self.control_socketLock = readwritelock.Lock()
+        self.messagesLock = readwritelock.Lock()
+        self.subscribeLock = readwritelock.Lock()
 
     # ==================================================
     # CICLO PRINCIPAL
@@ -64,7 +73,8 @@ class Subscriber:
                     thread.start()
                 #Adormece até ao momento de terminar e depois termina
                 time.sleep(self.duration-time.monotonic()+self.inicio)
-                self.running=False
+                with self.runningLock.write:
+                    self.running=False
 
             except Exception as e:
                 print(f"Erro: {e}")
@@ -92,10 +102,15 @@ class Subscriber:
             #Adormece a thread até que esteja no momento de atuar
             time.sleep(tempo-time.monotonic()+self.inicio)
             #Envia a mensagem e recebe resposta
-            self.control_socket.sendall(mensagem)
+            with self.control_socketLock.write:
+                self.control_socket.sendall(mensagem)
             if tempo:
-                if tipo: self.subscribe.append((topico,qos))
-                else: self.subscribe = [(filtro, nivel_qos) for filtro, nivel_qos in self.subscribe if filtro != topico]
+                if tipo: 
+                    with self.subscribeLock.write:
+                        self.subscribe.append((topico,qos))
+                else: 
+                    with self.subscribeLock.write:
+                        self.subscribe = [(filtro, nivel_qos) for filtro, nivel_qos in self.subscribe if filtro != topico]
             self.cicloUDP(data_socket)
         except OSError:
             pass
@@ -108,7 +123,9 @@ class Subscriber:
 
     def cicloUDP(self, data_socket:socket.socket):
         data_socket.settimeout(1.0)
-        while self.running:
+        while True:
+            with self.runningLock.read:
+                if not self.running: break
             try:
                 mensagem, addr = data_socket.recvfrom(2048)
                 thread = threading.Thread(target=self.tratamentoEventCast,args=(mensagem, addr,data_socket))
@@ -138,17 +155,33 @@ class Subscriber:
     def regista_mensagem(self,identificador:int,message_id:int,topico:str,metrica:str,qos:int):
         try:
             qosEfetivo = self.encontraQoS(topico,qos)
+            set_registo = None
             regiao, estacao, metrica = topico.split("/")
-            set_registo = self.messages.setdefault(regiao, {}).setdefault(estacao, {}).setdefault(metrica, set())
-            if qosEfetivo == 2 and message_id in set_registo: return
+            with self.messagesLock.read:
+                if (regiao in self.messages and estacao in self.messages[regiao] and metrica in self.messages[regiao][estacao]):
+                    set_registo = self.messages[regiao][estacao][metrica]
+            if set_registo is None: 
+                with self.messagesLock.write:
+                    if (regiao in self.messages and estacao in self.messages[regiao] and metrica in self.messages[regiao][estacao]):
+                        set_registo = self.messages[regiao][estacao][metrica]
+                    else: 
+                        set_registo = self.messages.setdefault(regiao, {}).setdefault(estacao, {}).setdefault(metrica, (readwritelock.Lock(),set()))
+            if qosEfetivo == 2:
+                with set_registo[0].read:
+                    if (message_id in set_registo[1]): return
+                with set_registo[0].write:
+                    if(message_id in set_registo[1]): return
+                    set_registo[1].add(message_id)
             util.registaLog(self.log, identificador, topico, message_id)
-            set_registo.add(message_id)
+                    
         except Exception:
             return
 
     def encontraQoS(self,topico:str,qos:int):
         if qos == 1: return qos
-        for filtro,filtro_qos in self.subscribe:
+        with self.subscribeLock.read:
+            lista = list(self.subscribe)
+        for filtro,filtro_qos in lista:
             if (util.filtroCorresponde(filtro,topico)) and filtro_qos == 2: return 2
         return qos
 

@@ -5,6 +5,7 @@ import subControl
 import eventCast
 import util
 import configParser
+import readwritelock
 
 # ==================================================
 # PUBLISHER
@@ -13,6 +14,7 @@ import configParser
 class Publisher:
 
     def __init__(self, config:configParser.ConfigPublisher):
+        #DADOS
         self.id:int = config["id"]
         self.inicio:float = time.monotonic()
         #Vamos assumir que é (ip,porta)
@@ -23,9 +25,17 @@ class Publisher:
         #Vamos assumir que publish é uma lista de (topico, QoS, count, rate)
         self.publish : list[tuple[str,int,int,int]]= config["publish"]
         self.drain: int= config["drain"]
+        #ESTADO
         self.runningTCP:int = len(self.publish)
+        #SOCKET
         self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.control_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+        #LOCKS
+        self.runningTCPLock = readwritelock.Lock()
+        self.control_socketLock = readwritelock.Lock()
+
+
+
         
     # ==================================================
     # CICLO PRINCIPAL
@@ -51,7 +61,9 @@ class Publisher:
                 thread.start()
                 thread_list.append(thread)
 
-            while(self.runningTCP>0):
+            while (True):
+                with self.runningTCPLock.read:
+                    if self.runningTCP <=0: break
                 time.sleep(1)
             self.control_socket.close()
 
@@ -72,8 +84,10 @@ class Publisher:
     def cicloPublicacao(self,topico:str,qos:int,count:int,rate:int):
         try:
             mensagem = subControl.controiMessage(False,True,True,False,False,qos,self.id,topico,0)
-            self.control_socket.sendall(mensagem)
-            self.runningTCP -=1
+            with self.control_socketLock.write:
+                self.control_socket.sendall(mensagem)
+            with self.runningTCPLock.write:
+                self.runningTCP -=1
             self.cicloUDP(topico,qos,count,rate)
         except OSError:
             raise
@@ -89,12 +103,13 @@ class Publisher:
             #Uma opção é cada thread teria o seu socket e recebia o seu ack do message_id
             data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             data_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+            acks_lock:readwritelock.Lock = readwritelock.Lock()
             acks:dict[int,bool] = {}
             time.sleep(self.start_after-time.monotonic()+self.inicio)
-            thread_ack = threading.Thread(target=self.recebeAcks,args=(acks,data_socket))
+            thread_ack = threading.Thread(target=self.recebeAcks,args=(acks,data_socket,acks_lock))
             thread_ack.start()
             while (count>0):
-                thread_send = threading.Thread(target=self.enviaMetrica,args=(topico,acks,data_socket,message_id,qos))
+                thread_send = threading.Thread(target=self.enviaMetrica,args=(topico,acks,data_socket,message_id,qos,acks_lock))
                 thread_send.start()
                 count -= 1
                 time.sleep(rate)
@@ -105,14 +120,20 @@ class Publisher:
     # FUNCAO DE THREAD - ENVIA UMA METRICA E RETRANSMITE SE NECESSÁRIO
     # ==================================================================
 
-    def enviaMetrica(self,topico:str,acks:dict[int,bool],socket:socket.socket,message_id:int,qos:int):
+    def enviaMetrica(self,topico:str,acks:dict[int,bool],socket:socket.socket,message_id:int,qos:int, lock:readwritelock.Lock):
         addr = self.broker_data
         message = eventCast.constroiMessage(False,qos,message_id,self.id,topico,"")
-        acks[message_id]=False
+        with lock.write:
+            acks[message_id]=False
         socket.sendto(message,addr)
         inicio = time.monotonic()
         util.registaLog(self.log, self.id, topico, message_id)
-        while (not acks[message_id] and time.monotonic()-inicio < self.drain):
+        while (True):
+            if time.monotonic()-inicio >= self.drain:
+                break
+            with lock.read:
+                if acks[message_id]:
+                    break
             time.sleep(1)
             socket.sendto(message,addr)
         return
@@ -121,10 +142,12 @@ class Publisher:
     # FUNCAO DE THREAD - RESPONSAVEL POR REGISTAR ACKS RECEBIDOS
     # ============================================================
 
-    def recebeAcks(self,acks:dict[int,bool],socket:socket.socket):
+    def recebeAcks(self,acks:dict[int,bool],socket:socket.socket, lock:readwritelock.Lock):
         resposta, addr = socket.recvfrom(1024)
         ack, qos, message_id, identificador, topico, metrica = eventCast.interpretarEventCast(resposta)
-        if ack and message_id in acks: acks[message_id] = True
+        if ack:
+            with lock.write:
+                if message_id in acks: acks[message_id] = True
 
     
 
