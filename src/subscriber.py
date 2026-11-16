@@ -5,7 +5,7 @@ import util
 import eventCast
 import subControl
 import configParser
-import readwritelock
+import mylock
 
 # ==================================================
 # SUBSCRIBER
@@ -26,17 +26,17 @@ class Subscriber:
         self.subscribe : list[tuple[str, int]] = config["subscribe"]
         #Vamos assumir que é uma lista de (tempo,True=subscribe ou false=unsubscribe (1 ou 0), topico, qos (apenas usado no True)) neste momento não dividimos mas depois pode ser dividido
         self.actions: list[tuple[int, bool, str, int]] = config["at"]
-        self.messages:dict[str,dict[str,dict[str,tuple[readwritelock.Lock,set[int]]]]] = {}
+        self.messages:dict[str,dict[str,dict[str,tuple[mylock.Lock,set[int]]]]] = {}
         #ESTADO
         self.running = True
         #SOCKET
         self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.control_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
         #LOCKS
-        self.runningLock = readwritelock.Lock()
-        self.control_socketLock = readwritelock.Lock()
-        self.messagesLock = readwritelock.Lock()
-        self.subscribeLock = readwritelock.Lock()
+        self.runningLock = mylock.Lock()
+        self.control_socketLock = mylock.Lock()
+        self.messagesLock = mylock.Lock()
+        self.subscribeLock = mylock.Lock()
 
     # ==================================================
     # CICLO PRINCIPAL
@@ -165,7 +165,7 @@ class Subscriber:
                     if (regiao in self.messages and estacao in self.messages[regiao] and metrica in self.messages[regiao][estacao]):
                         set_registo = self.messages[regiao][estacao][metrica]
                     else: 
-                        set_registo = self.messages.setdefault(regiao, {}).setdefault(estacao, {}).setdefault(metrica, (readwritelock.Lock(),set()))
+                        set_registo = self.messages.setdefault(regiao, {}).setdefault(estacao, {}).setdefault(metrica, (mylock.Lock(),set()))
             if qosEfetivo == 2:
                 with set_registo[0].read:
                     if (message_id in set_registo[1]): return

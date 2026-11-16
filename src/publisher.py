@@ -5,7 +5,7 @@ import subControl
 import eventCast
 import util
 import configParser
-import readwritelock
+import mylock
 
 # ==================================================
 # PUBLISHER
@@ -31,8 +31,8 @@ class Publisher:
         self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.control_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
         #LOCKS
-        self.runningTCPLock = readwritelock.Lock()
-        self.control_socketLock = readwritelock.Lock()
+        self.runningTCPLock = mylock.Lock()
+        self.control_socketLock = mylock.Lock()
 
 
 
@@ -103,7 +103,7 @@ class Publisher:
             #Uma opção é cada thread teria o seu socket e recebia o seu ack do message_id
             data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             data_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
-            acks_lock:readwritelock.Lock = readwritelock.Lock()
+            acks_lock:mylock.Lock = mylock.Lock()
             acks:dict[int,bool] = {}
             time.sleep(self.start_after-time.monotonic()+self.inicio)
             thread_ack = threading.Thread(target=self.recebeAcks,args=(acks,data_socket,acks_lock))
@@ -120,7 +120,7 @@ class Publisher:
     # FUNCAO DE THREAD - ENVIA UMA METRICA E RETRANSMITE SE NECESSÁRIO
     # ==================================================================
 
-    def enviaMetrica(self,topico:str,acks:dict[int,bool],socket:socket.socket,message_id:int,qos:int, lock:readwritelock.Lock):
+    def enviaMetrica(self,topico:str,acks:dict[int,bool],socket:socket.socket,message_id:int,qos:int, lock:mylock.Lock):
         addr = self.broker_data
         message = eventCast.constroiMessage(False,qos,message_id,self.id,topico,"")
         with lock.write:
@@ -142,7 +142,7 @@ class Publisher:
     # FUNCAO DE THREAD - RESPONSAVEL POR REGISTAR ACKS RECEBIDOS
     # ============================================================
 
-    def recebeAcks(self,acks:dict[int,bool],socket:socket.socket, lock:readwritelock.Lock):
+    def recebeAcks(self,acks:dict[int,bool],socket:socket.socket, lock:mylock.Lock):
         resposta, addr = socket.recvfrom(1024)
         ack, qos, message_id, identificador, topico, metrica = eventCast.interpretarEventCast(resposta)
         if ack:

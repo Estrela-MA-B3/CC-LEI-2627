@@ -5,7 +5,7 @@ import time
 import subControl
 import eventCast
 import configParser
-import readwritelock
+import mylock
 
 # ==================================================
 # CODIGOS DE RETORNO
@@ -42,7 +42,7 @@ class TopicLeaf:
         # QoS definida no registo do topico
         self.qos = qos
         # Message_id -> {subscriber_id: (timestamp)}
-        self.messages:dict[int, tuple[readwritelock.Lock,dict[int,float]]] = {}
+        self.messages:dict[int, tuple[mylock.Lock,dict[int,float]]] = {}
         # Subscritores do topico especifico
         self.subscribers:dict[int,int] = {}  # {subscriber_id: qos}
         
@@ -81,9 +81,9 @@ class Broker:
         self.data_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
 
         #LOCKS
-        self.topicLock = readwritelock.Lock()
-        self.subscritoresLock = readwritelock.Lock()
-        self.publishersLock = readwritelock.Lock()
+        self.topicLock = mylock.Lock()
+        self.subscritoresLock = mylock.Lock()
+        self.publishersLock = mylock.Lock()
 
 
     # ==================================================
@@ -461,7 +461,7 @@ class Broker:
     # PESQUISA DE DESTINATARIOS
     # ==================================================
 
-    def obterDestinatarios(self, topico:str, message_id:int)->tuple[list[int] | None,  tuple[readwritelock.Lock ,dict[int, float]] | None]:
+    def obterDestinatarios(self, topico:str, message_id:int)->tuple[list[int] | None,  tuple[mylock.Lock ,dict[int, float]] | None]:
         partes = topico.split("/")
         
         if len(partes) != 3 or any(not parte or parte == "*" for parte in partes):
@@ -502,7 +502,7 @@ class Broker:
         
         with self.topicLock.write:
             metrica_registada = True if message_id in metric_node.messages else False
-            ack_dic = metric_node.messages.get(message_id,(readwritelock.Lock(),{}))
+            ack_dic = metric_node.messages.get(message_id,(mylock.Lock(),{}))
             if metrica_registada is False:
                 metric_node.messages[message_id]=ack_dic
             
