@@ -1,4 +1,4 @@
-from src.readerwriterlock import rwlock
+from readerwriterlock import rwlock
 
 class Lock:
     def __init__(self):

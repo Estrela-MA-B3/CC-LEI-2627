@@ -16,14 +16,15 @@ def interpretarEventCast(dados: bytes) -> tuple[bool, int, int, int, str, str]:
     # 3. IDENTIFICADOR (8 bits)
     identificador = dados[posicao]
     posicao += 1
-    if len(dados) > 4:
+    comprimento = len(dados)
+    if comprimento > 4:
         # 4. TAMANHO DO TÓPICO (8 bits)
         tamanho_topico = dados[posicao]
         posicao += 1
         # 5. TÓPICO
         topico = dados[posicao:posicao + tamanho_topico].decode("utf-8")
         posicao += tamanho_topico
-        if len(dados) > 4 + tamanho_topico:
+        if comprimento > 5 + tamanho_topico:
             # 6. TAMANHO DA MÉTRICA (8 bits)
             tamanho_metrica = dados[posicao]
             posicao += 1

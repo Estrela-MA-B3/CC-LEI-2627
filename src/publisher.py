@@ -16,7 +16,7 @@ class Publisher:
     def __init__(self, config:configParser.ConfigPublisher):
         #DADOS
         self.id:int = config["id"]
-        self.inicio:float = time.monotonic()
+        self.inicio:float = 0.0
         #Vamos assumir que é (ip,porta)
         self.broker_control : tuple[str,int] = config["broker_control"]
         self.broker_data : tuple[str,int] = (config["broker_control"][0],-1)
@@ -33,6 +33,7 @@ class Publisher:
         #LOCKS
         self.runningTCPLock = mylock.Lock()
         self.control_socketLock = mylock.Lock()
+        self.logLock = mylock.Lock()
 
 
 
@@ -46,6 +47,7 @@ class Publisher:
         try:
             #Enviar a primeira mensagem com EstablishConnection para receber o id
             self.control_socket.connect(self.broker_control)
+            self.inicio = time.monotonic()
             mensagem = subControl.controiMessage(True,True,True,False,False,self.publish[0][1],self.id,self.publish[0][0],0)
             self.control_socket.sendall(mensagem)
             resposta = subControl.recebeMensagemSubControl(self.control_socket)
@@ -98,22 +100,39 @@ class Publisher:
 
     def cicloUDP(self,topico:str,qos:int,count:int,rate:int):
         data_socket = None
+        parar = threading.Event()
+        message_id = 1
+        thread_ack = None
         try:
-            message_id = 1
             #Uma opção é cada thread teria o seu socket e recebia o seu ack do message_id
             data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             data_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
             acks_lock:mylock.Lock = mylock.Lock()
             acks:dict[int,bool] = {}
-            time.sleep(self.start_after-time.monotonic()+self.inicio)
-            thread_ack = threading.Thread(target=self.recebeAcks,args=(acks,data_socket,acks_lock))
+            time.sleep(max(self.start_after-time.monotonic()+self.inicio,0))
+            thread_ack = threading.Thread(target=self.recebeAcks,args=(acks,data_socket,acks_lock,parar))
             thread_ack.start()
             while (count>0):
                 thread_send = threading.Thread(target=self.enviaMetrica,args=(topico,acks,data_socket,message_id,qos,acks_lock))
                 thread_send.start()
                 count -= 1
-                time.sleep(rate)
+                message_id += 1
+                time.sleep(1/rate)
+            espera = time.monotonic()
+            while (True):
+                if (time.monotonic() - espera > self.drain): break
+                cond = True
+                with acks_lock.read:
+                    for valor in acks.values():
+                        if (valor==False): cond = False
+                if (cond): break
+                time.sleep(1)
+
+        except OSError:
+            pass
         finally:
+            parar.set()
+            if thread_ack is not None: thread_ack.join()
             if data_socket is not None: data_socket.close()
 
     # ==================================================================
@@ -126,29 +145,36 @@ class Publisher:
         with lock.write:
             acks[message_id]=False
         socket.sendto(message,addr)
+        with self.logLock.write:
+            util.registaLog(self.log, self.id, topico, message_id)
         inicio = time.monotonic()
-        util.registaLog(self.log, self.id, topico, message_id)
-        while (True):
-            if time.monotonic()-inicio >= self.drain:
-                break
+        while time.monotonic()-inicio >= self.drain:
+            time.sleep(1)
             with lock.read:
                 if acks[message_id]:
                     break
-            time.sleep(1)
-            socket.sendto(message,addr)
-        return
+            try:
+                socket.sendto(message,addr)
+            except OSError: break
 
     # ============================================================
     # FUNCAO DE THREAD - RESPONSAVEL POR REGISTAR ACKS RECEBIDOS
     # ============================================================
 
-    def recebeAcks(self,acks:dict[int,bool],socket:socket.socket, lock:mylock.Lock):
-        resposta, addr = socket.recvfrom(1024)
-        ack, qos, message_id, identificador, topico, metrica = eventCast.interpretarEventCast(resposta)
-        if ack:
-            with lock.write:
-                if message_id in acks: acks[message_id] = True
-
+    def recebeAcks(self,acks:dict[int,bool],my_socket:socket.socket, lock:mylock.Lock, parar: threading.Event):
+        time.sleep(max(self.start_after-time.monotonic()+self.inicio,0))
+        my_socket.settimeout(1.0)
+        while not parar.is_set():
+            try:
+                resposta, addr = my_socket.recvfrom(1024)
+                ack, qos, message_id, identificador, topico, metrica = eventCast.interpretarEventCast(resposta)
+                if ack:
+                    with lock.write:
+                        if message_id in acks: acks[message_id] = True
+            except socket.timeout:
+                continue
+            except OSError:
+                raise
     
 
 

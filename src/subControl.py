@@ -1,4 +1,3 @@
-import util 
 import socket
 
 SUBCONTROL_HEADER_SIZE = 4
@@ -16,7 +15,7 @@ def interpretar_SubControl(dados: bytearray) -> tuple[int, bool, bool, bool, boo
     rs  = bool(flags & 0b00100000)
     cs  = bool(flags & 0b00010000)
     to  = bool(flags & 0b00001000)
-    qos = (flags >> 2) & 0b00000001 + 1
+    qos = ((flags >> 2) & 0b00000001 ) + 1
     # Bits 1 e 0 são reservados para flags futuras
 
     posicao = 3
@@ -61,7 +60,7 @@ def constroiAckMessage(identificador: int, portaUDP: int) -> bytes:
         rs=True,
         cs=False,
         to=False,
-        qos=0,
+        qos=1,
         id=identificador,
         topico="",
         porta=portaUDP
@@ -109,33 +108,24 @@ def controiMessage(udp: bool,ps: bool,rs: bool,cs: bool,to: bool,qos: int,id: in
 
     return bytes(mensagem)
 
-def receberBytes(client_socket:socket.socket, quantidade:int)->bytearray:
-    buffer = bytearray()
-
-    while len(buffer) < quantidade:
-        dados = client_socket.recv(quantidade - len(buffer))
-
-        if not dados:
+def recebeMensagemSubControl(client_socket: socket.socket) -> bytearray:
+    resultado = bytearray()
+    try:
+        tamanhoTotalB = client_socket.recv(1)
+        if not tamanhoTotalB:
             raise ConnectionError("Ligação TCP terminada")
-
-        buffer.extend(dados)
-
-    return buffer
-
-def recebeMensagemSubControl(client_socket:socket.socket)->bytearray:
-
-    # Receber os 2 bytes que indicam o tamanho total
-    mensagem = receberBytes(client_socket, 2)
-
-    tamanhoTotal = util.traduzInt(mensagem, 16)
-
-    if tamanhoTotal < SUBCONTROL_HEADER_SIZE:
-        raise ValueError("Tamanho de mensagem inválido")
-
-    # Receber os restantes bytes
-    restantes = receberBytes(client_socket, tamanhoTotal - 2)
-
-    mensagem.extend(restantes)
-
-    return mensagem
+        tamanhoTotal = tamanhoTotalB[0]
+        if tamanhoTotal < SUBCONTROL_HEADER_SIZE:
+            raise ValueError("Tamanho de mensagem inválido")
+        resultado.extend(tamanhoTotalB)
+        em_falta = tamanhoTotal - 1
+        while em_falta > 0:
+            dados = client_socket.recv(em_falta)
+            if not dados:
+                raise ConnectionError("Ligação terminada a meio de uma mensagem")
+            resultado.extend(dados)
+            em_falta -= len(dados)
+    except OSError:
+        raise
+    return resultado
 

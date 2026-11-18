@@ -68,6 +68,8 @@ class Broker:
         self.subscritores:dict[int,tuple[str,dict[str,int]]] = {}
         # Dicionário de publisher id -> Endereço
         self.publishers:dict[int,set[str]] = {}
+        # Tuplo com os sockets de publishers e subscritores 
+        self.sockets:tuple[dict[int,socket.socket],dict[int,socket.socket]] = ({},{})
 
         #ESTADO 
         self.running:bool = True
@@ -84,6 +86,7 @@ class Broker:
         self.topicLock = mylock.Lock()
         self.subscritoresLock = mylock.Lock()
         self.publishersLock = mylock.Lock()
+        self.socketsLock = mylock.Lock()
 
 
     # ==================================================
@@ -132,9 +135,9 @@ class Broker:
     
         finally:
             self.running = False
-    
             self.control_socket.close()
             self.data_socket.close()
+            self.fecha_sockets()
     
             if tcp_thread is not None: tcp_thread.join()
             if udp_thread is not None: udp_thread.join()
@@ -162,13 +165,15 @@ class Broker:
                 break    
     
     def cicloUDP(self):
+        self.data_socket.settimeout(1.0)
         while self.running:
             try:
                 mensagem, addr = self.data_socket.recvfrom(1024)
     
-                thread = threading.Thread(target=self.tratamentoEventCast,args=(mensagem, addr))
+                thread = threading.Thread(target=self.tratamentoEventCast,args=(mensagem, addr),daemon=True)
                 thread.start()
-    
+            except socket.timeout:
+                continue
             except OSError as e:
                 if self.running:
                     self.erro_udp = e
@@ -179,15 +184,24 @@ class Broker:
     # ==================================================
 
     def tratamentoSubControl(self, client_socket:socket.socket, client_address:tuple[str,int]):
+        id = -1
+        tipo = 0
         try:
+            buffer = subControl.recebeMensagemSubControl(client_socket)
+            tamanhoTotal, udp, ps, rs, cs, to, QoS, identificador, porta, topico = subControl.interpretar_SubControl(buffer)
+            tipo = 0 if ps else 1
+            id = identificador
+            with self.socketsLock.write:
+                self.sockets[tipo][id] = client_socket
             while True:
-                buffer = subControl.recebeMensagemSubControl(client_socket)
-                tamanhoTotal, udp, ps, rs, cs, to, QoS, identificador, porta, topico = subControl.interpretar_SubControl(buffer) 
                 if (rs and topico):
                     if (ps): self.registoPub(identificador,topico,QoS)
-                    else: self.subscricaoSub(identificador,topico,QoS,porta,client_address[0])
+                    else: 
+                        self.subscricaoSub(identificador,topico,QoS,porta,client_address[0])
                 if (cs): self.cancelarSubscricao(identificador,topico)
-                if (to): self.terminacaoOrdenada(ps,identificador)
+                if (to): 
+                    self.terminacaoOrdenada(ps,identificador)
+                    break
                 # So enviamos uma mensagem se estiver a pedir a porta UDP ou se for uma subscricao para comunicar o qos
                 if (udp): self.mensagemSubControl(client_socket,self.id)
                 # Se foi gerada uma terminacao ordenada por parte do broker ao publisher ou ao subscriber ele deve terminar
@@ -195,10 +209,18 @@ class Broker:
                     if (not ps and (not identificador in self.subscritores)):break
                 with self.publishersLock.read: 
                     if (ps and (not identificador in self.publishers) or to):break
-        except OSError as e:
+                buffer = subControl.recebeMensagemSubControl(client_socket)
+                tamanhoTotal, udp, ps, rs, cs, to, QoS, identificador, porta, topico = subControl.interpretar_SubControl(buffer) 
+        except Exception:
             pass
-        finally: 
-            client_socket.close()
+        finally:
+            if id == -1: 
+                client_socket.close()
+            else: 
+                with self.socketsLock.write: 
+                    socket = self.sockets[tipo].pop(id,None)
+                    if socket is not None: 
+                        socket.close()
 
     def mensagemSubControl(self, client_socket:socket.socket,identificador:int):
         try:
@@ -208,8 +230,10 @@ class Broker:
             raise e
 
     def tratamentoEventCast(self, mensagem:bytes, addr:tuple[str,int]):
-        ack, qos, message_id, identificador, topico, metrica = eventCast.interpretarEventCast(mensagem)
-
+        try: 
+            ack, qos, message_id, identificador, topico, metrica = eventCast.interpretarEventCast(mensagem)
+        except Exception:
+            return
         # Estamos a receber um ACK de um subscritor tem de ter o message_id, identificador e topico, neste caso, metrica = null
         if (ack):
             ack_dic = None
@@ -230,20 +254,8 @@ class Broker:
             thread_ack = threading.Thread(target=self.enviaACKEventCast,args=(message_id,addr))
             thread_ack.start()
             #Operação com Lock para ver quem são os destinatários a enviar!
-            subscritores, ack_dic = self.obterDestinatarios(topico,message_id)
-            if subscritores is None or ack_dic is None: return
-            # Colocar Lock na estrtutura para não dar erros de escrita vs leitura
-            porta = None
-            endIP = ""
-            sub_dic:dict[int,tuple[str,int]] = {}
-            with self.subscritoresLock.read:
-                for id_sub in subscritores:
-                    sub = self.subscritores.get(id_sub,None)
-                    if sub is not None:
-                        endIP = sub[0]
-                        porta = sub[1].get(topico,None)
-                        if porta is not None: 
-                            sub_dic[id_sub] = (endIP,porta)
+            sub_dic, ack_dic = self.obterDestinatarios(topico,message_id)
+            if sub_dic is None or ack_dic is None: return
             for id_sub,endereco in sub_dic.items():
                 self.enviaPublicacao(endereco,mensagem)
                 with ack_dic[0].write:
@@ -256,18 +268,20 @@ class Broker:
                 if not lista: break
                 for id_sub, tempo in lista:
                         evicted = False
+                        # Verifica se está no momento de fazer evict 
                         if time.monotonic() - tempo > self.evic_after:
                             thread = threading.Thread(target=self.terminacaoOrdenada,args=(False, id_sub))
                             thread.start()
                             evicted=True
-                        #Verifica se ele foi terminado ou se fez unsubscribe -> Pode gerar escassez para os writers....
+                        #Verifica se ele foi terminado por completo
                         else: 
                             with self.subscritoresLock.read:
-                                if (id_sub not in self.subscritores or self.subscritores[id_sub][1].get(topico) is None):
-                                    evicted = True                               
+                                if (id_sub not in self.subscritores):
+                                    evicted = True
+                        # Caso um dos testes anteriores seja positivo não é feita nova retransmissão                   
                         if evicted:
                             with ack_dic[0].write:
-                                ack_dic[1].pop(id_sub)
+                                ack_dic[1].pop(id_sub,None)
                         else: self.enviaPublicacao(sub_dic[id_sub],mensagem)
             thread_ack.join()
         return
@@ -299,11 +313,12 @@ class Broker:
 
         # Insere na arvore todas as estruturas que é preciso criar 
         with self.topicLock.write:
-                self.topics.setdefault(regiao, RegionNode()).children.setdefault(estacao, StationNode()).children.setdefault(metrica, TopicLeaf(qos))
+                node = self.topics.setdefault(regiao, RegionNode()).children.setdefault(estacao, StationNode()).children.setdefault(metrica, TopicLeaf(qos))
+                node.qos = qos
             
         
         with self.publishersLock.write:
-            self.publishers[publisher_id].add(topico)
+            self.publishers.setdefault(publisher_id, set()).add(topico)
 
         return SUCESSO 
 
@@ -313,42 +328,24 @@ class Broker:
 
     def subscricaoSub(self, subscriber_id:int, topico:str, qos:int, portaUDP:int, endIP:str)->int:
         partes = topico.split("/")
-
+        
         # Subscrição com formato inválido 
         if len(partes) < 2 or len(partes)>3:
             return -1
-        with self.topicLock.read:
-            region_node = self.topics.get(partes[0])
-    
-            # Nodo da Região não existe
-            if region_node is None:
-                            return -1
-        
-            # Subscrição de uma região inteira: north/*
-            elif len(partes) == 2 and partes[1] == "*":
-                node = region_node
-        
-            # Subscrição de uma estação inteira ou tópico específico
-            elif len(partes) == 3:
-                station_node = region_node.children.get(partes[1])
-    
-                if station_node is None:
-                    return -1
-        
-                if partes[2] == "*":
-                    node = station_node
-        
-                else:
-                    metric_node = station_node.children.get(partes[2])
-                    if metric_node is None:
-                        return -1
-                    node = metric_node
-        
+
+        # Faz a subscrição
+        if len(partes) == 2 and partes[1] == "*":
+            with self.topicLock.write:
+                self.topics.setdefault(partes[0], RegionNode()).subscribers[subscriber_id] = qos
+
+        if len(partes) == 3:
+            if partes[2] == "*":
+                with self.topicLock.write:
+                    self.topics.setdefault(partes[0], RegionNode()).children.setdefault(partes[1],StationNode()).subscribers[subscriber_id] = qos
             else:
-                return -1
-        with self.topicLock.write:
-            #Regista a subscrição no dicionário onde coloca o id do subscritor como chave e qos como valor
-            node.subscribers[subscriber_id] = qos
+                with self.topicLock.write:
+                    self.topics.setdefault(partes[0], RegionNode()).children.setdefault(partes[1],StationNode()).children.setdefault(partes[2],TopicLeaf(0)).subscribers[subscriber_id] = qos
+
         with self.subscritoresLock.write:
             #Atualiza as subscricoes do subscriber 
             tuplo = self.subscritores.setdefault(subscriber_id, (endIP,{}))
@@ -438,6 +435,10 @@ class Broker:
                     # Remover região se ficar vazia
                     if not region_node.children and not region_node.subscribers:
                         self.topics.pop(regiao, None)
+
+            with self.socketsLock.write:
+                socket = self.sockets[0].pop(identificador,None)
+                if socket is not None: socket.close()
     
         # Caso seja um SUBSCRIBER
         else:
@@ -449,7 +450,11 @@ class Broker:
                 self.cancelarSubscricao(identificador,topico)
 
             with self.subscritoresLock.write:
-                self.subscritores.pop(identificador)
+                self.subscritores.pop(identificador,None)
+
+            with self.socketsLock.write:
+                socket = self.sockets[1].pop(identificador,None)
+                if socket is not None: socket.close()
     
       
     
@@ -461,7 +466,7 @@ class Broker:
     # PESQUISA DE DESTINATARIOS
     # ==================================================
 
-    def obterDestinatarios(self, topico:str, message_id:int)->tuple[list[int] | None,  tuple[mylock.Lock ,dict[int, float]] | None]:
+    def obterDestinatarios(self, topico:str, message_id:int)->tuple[dict[int,tuple[str,int]] | None,  tuple[mylock.Lock ,dict[int, float]] | None]:
         partes = topico.split("/")
         
         if len(partes) != 3 or any(not parte or parte == "*" for parte in partes):
@@ -490,35 +495,69 @@ class Broker:
     
             publication_qos = metric_node.qos
     
-            # Acumular subscritores encontrados, eliminar duplicados e definir QoS em uso
-            matching_subscribers:dict[int,int] = {}
-    
             nodes : list[list[tuple[int,int]]] = [
                 list(region_node.subscribers.items()),
                 list(station_node.subscribers.items()),
                 list(metric_node.subscribers.items())
             ] 
-        
+
+        lista : list[tuple[tuple[int,tuple[str,int]],int]] = list()
+
+        with self.subscritoresLock.read:
+            filtro = f"{regiao}/*"
+            for subscriber_id, subscription_qos in nodes[0]:
+                porta = self.subscritores.get(subscriber_id,("",{}))[1].get(filtro,0)
+                if porta != 0:
+                    lista.append(((subscriber_id,(self.subscritores[subscriber_id][0],porta)),subscription_qos))
+    
+            filtro = f"{regiao}/{estacao}/*"
+            for subscriber_id, subscription_qos in nodes[1]:
+                porta = self.subscritores.get(subscriber_id,("",{}))[1].get(filtro,0)
+                if porta != 0:
+                    lista.append(((subscriber_id,(self.subscritores[subscriber_id][0],porta)),subscription_qos))
+    
+            filtro = f"{regiao}/{estacao}/{metrica}"
+            for subscriber_id, subscription_qos in nodes[2]:
+                porta = self.subscritores.get(subscriber_id,("",{}))[1].get(filtro,0)
+                if porta != 0:
+                    lista.append(((subscriber_id,(self.subscritores[subscriber_id][0],porta)),subscription_qos))
+
+            
+
         
         with self.topicLock.write:
             metrica_registada = True if message_id in metric_node.messages else False
+            # Caso o ack_dic não esteja vazio significa que estemos a lidar com um caso onde o ack do broker se perder, logo não temos que transmitir
+            if metrica_registada and metric_node.messages[message_id]: return None,None
             ack_dic = metric_node.messages.get(message_id,(mylock.Lock(),{}))
             if metrica_registada is False:
                 metric_node.messages[message_id]=ack_dic
-            
+
+        # Acumular subscritores encontrados, eliminar duplicados e definir QoS em uso
+        matching_subscribers:dict[int,tuple[tuple[str,int],int]] = {}
+
+        for sub,subscription_qos in lista:
+            qos_atual = matching_subscribers.get(sub[0],((0,0),0))[1]
+            if qos_atual == 0:
+                matching_subscribers[sub[0]] = (sub[1],min(subscription_qos,publication_qos))
+            elif publication_qos == 2 and qos_atual == 1 and subscription_qos == 2:
+                matching_subscribers[sub[0]] = (sub[1],subscription_qos)
+
+        resultado : dict[int,tuple[str,int]] = {k: v[0] for k, v in matching_subscribers.items() if v[1] == 1} if metrica_registada else {k: v[0] for k, v in matching_subscribers.items()}
         
 
-        for node in nodes:
-            for subscriber_id, subscription_qos in node:
-                matching_subscribers[subscriber_id] = min (publication_qos, max(
-                    matching_subscribers.get(subscriber_id, subscription_qos),
-                    subscription_qos
-                ))
-        
-        if metrica_registada:
-            matching_subscribers = {k: v for k, v in matching_subscribers.items() if v == 2}
-  
-            
-        return list(matching_subscribers.keys()), ack_dic
+        return resultado, ack_dic
+
+    # =====================================================================
+    # FUNCAO DE FECHO DE SOCKETS 
+    # =====================================================================
+    def fecha_sockets (self):
+        with self.socketsLock.write:
+            for s in self.sockets[0].values():
+                s.shutdown(socket.SHUT_RDWR)
+                s.close()
+            for s in self.sockets[1].values():
+                s.shutdown(socket.SHUT_RDWR)
+                s.close()
 
   

@@ -37,6 +37,7 @@ class Subscriber:
         self.control_socketLock = mylock.Lock()
         self.messagesLock = mylock.Lock()
         self.subscribeLock = mylock.Lock()
+        self.logLock = mylock.Lock()
 
     # ==================================================
     # CICLO PRINCIPAL
@@ -45,8 +46,8 @@ class Subscriber:
     def executar(self):
             thread_list:list[threading.Thread] = []
             data_socket:socket.socket
+            self.inicio = time.monotonic()
             try:
-                self.inicio = time.monotonic()
                 #Enviar a primeira mensagem e recebe a mensagem para receber qual a portaUDP do broker
                 data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 data_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
@@ -100,7 +101,7 @@ class Subscriber:
             cs = not tipo
             mensagem = subControl.controiMessage(True,False,rs,cs,False,qos,self.id,topico,data_port) 
             #Adormece a thread até que esteja no momento de atuar
-            time.sleep(tempo-time.monotonic()+self.inicio)
+            time.sleep(max(tempo-time.monotonic()+self.inicio,0))
             #Envia a mensagem e recebe resposta
             with self.control_socketLock.write:
                 self.control_socket.sendall(mensagem)
@@ -144,7 +145,7 @@ class Subscriber:
             ack, qos, message_id, identificador, topico, metrica = eventCast.interpretarEventCast(mensagem)
             ack_message = eventCast.constroiAckMessage(message_id,self.id,topico)
             data_socket.sendto(ack_message,addr)
-            self.regista_mensagem(message_id,identificador,topico,metrica,qos)
+            self.regista_mensagem(self.id,message_id,topico,metrica,qos)
         except OSError:        
             return
         
@@ -152,7 +153,7 @@ class Subscriber:
     # REGISTA UMA MENSAGEM NA LOG - VERIFICA QOS
     # ==================================================
 
-    def regista_mensagem(self,identificador:int,message_id:int,topico:str,metrica:str,qos:int):
+    def regista_mensagem(self,identificador:int,message_id:int,topico:str,metricaRecebida:str,qos:int):
         try:
             qosEfetivo = self.encontraQoS(topico,qos)
             set_registo = None
@@ -172,7 +173,8 @@ class Subscriber:
                 with set_registo[0].write:
                     if(message_id in set_registo[1]): return
                     set_registo[1].add(message_id)
-            util.registaLog(self.log, identificador, topico, message_id)
+            with self.logLock.write:
+                util.registaLog(self.log, identificador, topico, message_id)
                     
         except Exception:
             return
