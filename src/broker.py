@@ -387,29 +387,6 @@ class Broker:
             with self.publishersLock.write:
                 topicos = self.publishers.pop(identificador,[])
 
-            with self.topicLock.write:
-                for topico in topicos:
-                    regiao, estacao, metrica = topico.split("/")
-        
-                    region_node = self.topics.get(regiao) 
-                    if region_node is None:
-                        continue
-        
-                    station_node = region_node.children.get(estacao)
-                    if station_node is None:
-                        continue
-        
-                    # Remover o tópico
-                    station_node.children.pop(metrica, None) 
-        
-                    # Remover estação se ficar vazia
-                    if not station_node.children and not station_node.subscribers:
-                        region_node.children.pop(estacao, None)
-        
-                    # Remover região se ficar vazia
-                    if not region_node.children and not region_node.subscribers:
-                        self.topics.pop(regiao, None)
-
             with self.socketsLock.write:
                 socket = self.sockets[0].pop(identificador,None)
                 if socket is not None: util.fechar(socket)
