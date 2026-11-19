@@ -28,12 +28,11 @@ class Subscriber:
         self.actions: list[tuple[int, bool, str, int]] = config["at"]
         self.messages:dict[str,dict[str,dict[str,tuple[mylock.Lock,set[int]]]]] = {}
         #ESTADO
-        self.running = True
+        self.running:threading.Event = threading.Event()
         #SOCKET
         self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.control_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
         #LOCKS
-        self.runningLock = mylock.Lock()
         self.control_socketLock = mylock.Lock()
         self.messagesLock = mylock.Lock()
         self.subscribeLock = mylock.Lock()
@@ -74,8 +73,7 @@ class Subscriber:
                     thread.start()
                 #Adormece até ao momento de terminar e depois termina
                 time.sleep(self.duration-time.monotonic()+self.inicio)
-                with self.runningLock.write:
-                    self.running=False
+                self.running.set()
 
             except Exception as e:
                 print(f"Erro: {e}")
@@ -124,15 +122,13 @@ class Subscriber:
 
     def cicloUDP(self, data_socket:socket.socket):
         data_socket.settimeout(1.0)
-        while True:
-            with self.runningLock.read:
-                if not self.running: break
+        while not self.running.is_set():
             try:
                 mensagem, addr = data_socket.recvfrom(2048)
                 thread = threading.Thread(target=self.tratamentoEventCast,args=(mensagem, addr,data_socket))
                 thread.start()
             except socket.timeout:
-                pass
+                continue
             except OSError as e:
                 raise e
 
@@ -174,8 +170,7 @@ class Subscriber:
                     if(message_id in set_registo[1]): return
                     set_registo[1].add(message_id)
             with self.logLock.write:
-                util.registaLog(self.log, identificador, topico, message_id)
-                    
+                util.registaLog(self.log, identificador, topico, message_id)          
         except Exception:
             return
 

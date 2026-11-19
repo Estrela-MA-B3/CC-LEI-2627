@@ -81,7 +81,8 @@ class Broker:
     # ==================================================
 
     def executar(self):
-
+        tcp_thread = None 
+        udp_thread = None
     
         try:
 
@@ -112,9 +113,8 @@ class Broker:
             if udp_thread is not None: udp_thread.join()
 
     # ==================================================
-    # FUNÇÃO DE CICLO DOS SOCKETS
+    # FUNÇÃO DE CICLO DOS SOCKETS - SUBCONTROL (TCP)
     # ==================================================
-    
     
     def cicloTCP(self):
         self.control_socket.settimeout(1.0)
@@ -122,36 +122,19 @@ class Broker:
             try:
                 client_socket, client_address = self.control_socket.accept()
     
-                thread = threading.Thread(target=self.tratamentoSubControl,args=(client_socket, client_address))
+                thread = threading.Thread(target=self.tratamentoSubControl,args=(client_socket, client_address), daemon=True)
                 thread.start()
 
-            #Termina com o close e a excessão associada caso contrário colocamos o timeout e esta condição para ele avaliar o running periodicamente
             except socket.timeout:
                 continue
-            except OSError as e:
-                if self.running:
-                    self.erro_tcp = e
-                break    
+            except OSError:
+                raise
     
-    def cicloUDP(self):
-        self.data_socket.settimeout(1.0)
-        while not self.running.is_set():
-            try:
-                mensagem, addr = self.data_socket.recvfrom(1024)
-    
-                thread = threading.Thread(target=self.tratamentoEventCast,args=(mensagem, addr),daemon=True)
-                thread.start()
-            except socket.timeout:
-                continue
-            except OSError as e:
-                if self.running:
-                    self.erro_udp = e
-                break
-
     # ==================================================
-    # TRATAMENTO DE UMA MENSAGEM RECEBIDA
+    # TRATAMENTO DE UMA MENSAGEM RECEBIDA - SUBCONTROL
     # ==================================================
 
+    # Queremos que os erros neste caso fiquem contidos dentro da thread. A thread de accept não precisa de terminar só porque um socket fechou 
     def tratamentoSubControl(self, client_socket:socket.socket, client_address:tuple[str,int]):
         id = -1
         tipo = 0
@@ -162,7 +145,7 @@ class Broker:
             id = identificador
             with self.socketsLock.write:
                 self.sockets[tipo][id] = client_socket
-            while True:
+            while not self.running.is_set():
                 if (rs and topico):
                     if (ps): self.registoPub(identificador,topico,QoS)
                     else: 
@@ -186,7 +169,9 @@ class Broker:
             if id == -1: 
                 util.fechar(client_socket)
             else:
-                self.terminacaoOrdenada(tipo == 0, id)
+                with self.socketsLock.write:
+                    s = self.sockets[tipo].pop(id,None)
+                if s is not None: util.fechar(s)
 
     def mensagemSubControl(self, client_socket:socket.socket,identificador:int):
         try:
@@ -195,68 +180,94 @@ class Broker:
         except OSError as e:
             raise e
 
+    # ==================================================
+    # FUNÇÃO DE CICLO DOS SOCKETS - EVENTCAST (UDP)
+    # ==================================================
+
+    def cicloUDP(self):
+        self.data_socket.settimeout(1.0)
+        while not self.running.is_set():
+            try:
+                mensagem, addr = self.data_socket.recvfrom(1024)
+    
+                thread = threading.Thread(target=self.tratamentoEventCast,args=(mensagem, addr), daemon=True)
+                thread.start()
+            
+            except socket.timeout:
+                continue
+            except OSError:
+                raise
+
+    # ==================================================
+    # TRATAMENTO DE UMA MENSAGEM RECEBIDA - EVENTCAST
+    # ==================================================
+
+    #Exceção gerada no tratamento deve ficar contida no tratamento. O Socket não deve ser interrompido porque o tratamento de uma mensagem falhou.
     def tratamentoEventCast(self, mensagem:bytes, addr:tuple[str,int]):
         try: 
             ack, qos, message_id, identificador, topico, metrica = eventCast.interpretarEventCast(mensagem)
         except Exception:
             return
+        
         # Estamos a receber um ACK de um subscritor tem de ter o message_id, identificador e topico, neste caso, metrica = null
         if (ack):
-            ack_dic = None
-            partes = topico.split("/")
-            if len(partes) != 3 or any(not parte or parte == "*" for parte in partes):return
-            with self.topicLock.read:
-                if partes[0] in self.topics:
-                    if partes[1] in self.topics[partes[0]].children:
-                        if partes[2] in self.topics[partes[0]].children[partes[1]].children:
-                            if message_id in self.topics[partes[0]].children[partes[1]].children[partes[2]].messages:
-                                ack_dic = self.topics[partes[0]].children[partes[1]].children[partes[2]].messages[message_id]
-            if ack_dic is not None: 
-                with ack_dic[0].write:
-                    ack_dic[1].pop(identificador, None)
+            self.registaAckEventCast(message_id,topico,identificador)
 
         # Estamos a receber uma nova métrica de um publisher. Neste caso o identificador é o do publisher que acaba por ser também inutil
         else:
             thread_ack = threading.Thread(target=self.enviaACKEventCast,args=(message_id,addr))
             thread_ack.start()
-            #Operação com Lock para ver quem são os destinatários a enviar!
-            sub_dic, ack_dic = self.obterDestinatarios(topico,message_id)
-            if sub_dic is None or ack_dic is None: return
-            for id_sub,endereco in sub_dic.items():
-                self.enviaPublicacao(endereco,mensagem)
-                with ack_dic[0].write:
-                    ack_dic[1][id_sub] = (time.monotonic())
-            while True:
-                time.sleep(1)
-                lista = None
-                with ack_dic[0].read:
-                    lista = list(ack_dic[1].items())
-                if not lista: break
-                for id_sub, tempo in lista:
-                        evicted = False
-                        # Verifica se está no momento de fazer evict 
-                        if time.monotonic() - tempo > self.evict_after:
-                            thread = threading.Thread(target=self.terminacaoOrdenada,args=(False, id_sub))
-                            thread.start()
-                            evicted=True
-                        #Verifica se ele foi terminado por completo
-                        else: 
-                            with self.subscritoresLock.read:
-                                if (id_sub not in self.subscritores):
-                                    evicted = True
-                        # Caso um dos testes anteriores seja positivo não é feita nova retransmissão                   
-                        if evicted:
-                            with ack_dic[0].write:
-                                ack_dic[1].pop(id_sub,None)
-                        else: self.enviaPublicacao(sub_dic[id_sub],mensagem)
+            self.cicloEnvioPublicao(mensagem,topico,message_id)
             thread_ack.join()
-        return
-    
+
+    def registaAckEventCast(self,message_id:int,topico:str,identificador:int):
+        ack_dic = None
+        partes = topico.split("/")
+        if len(partes) != 3 or any(not parte or parte == "*" for parte in partes):return
+        with self.topicLock.read:
+            if partes[0] in self.topics:
+                if partes[1] in self.topics[partes[0]].children:
+                    if partes[2] in self.topics[partes[0]].children[partes[1]].children:
+                        if message_id in self.topics[partes[0]].children[partes[1]].children[partes[2]].messages:
+                            ack_dic = self.topics[partes[0]].children[partes[1]].children[partes[2]].messages[message_id]
+        if ack_dic is not None: 
+            with ack_dic[0].write:
+                ack_dic[1].pop(identificador, None)
+        
+    def cicloEnvioPublicao(self, mensagem:bytes, topico: str, message_id:int):
+        #Operação com Lock para ver quem são os destinatários a enviar!
+        sub_dic, ack_dic = self.obterDestinatarios(topico,message_id)
+        if sub_dic is None or ack_dic is None: return
+        for id_sub,endereco in sub_dic.items():
+            self.enviaPublicacao(endereco,mensagem)
+            with ack_dic[0].write:
+                ack_dic[1][id_sub] = time.monotonic()
+        while not self.running.wait(1):
+            with ack_dic[0].read:
+                lista = list(ack_dic[1].items())
+            if not lista: break
+            for id_sub, tempo in lista:
+                evicted = False
+                # Verifica se está no momento de fazer evict 
+                if time.monotonic() - tempo > self.evict_after:
+                    thread = threading.Thread(target=self.terminacaoOrdenada,args=(False, id_sub))
+                    thread.start()
+                    evicted=True
+                #Verifica se ele foi terminado por completo
+                else: 
+                    with self.subscritoresLock.read:
+                        if (id_sub not in self.subscritores):
+                            evicted = True
+                # Caso um dos testes anteriores seja positivo não é feita nova retransmissão                   
+                if evicted:
+                    with ack_dic[0].write:
+                        ack_dic[1].pop(id_sub,None)
+                else: self.enviaPublicacao(sub_dic[id_sub],mensagem) 
         
     def enviaPublicacao(self,endereco:tuple[str,int],mensagem:bytes):
         try:
             self.data_socket.sendto(mensagem,endereco)
-        except OSError as e:
+        except OSError:
             return
 
     def enviaACKEventCast(self,message_id:int, addr:tuple[str,int]):
@@ -265,7 +276,6 @@ class Broker:
             self.data_socket.sendto(ack_message,addr)
         except OSError as e:
             return
-
 
     # ==================================================
     # REGISTO DE PUBLICACAO / TOPICO
@@ -286,7 +296,6 @@ class Broker:
         
         with self.publishersLock.write:
             self.publishers.setdefault(publisher_id, set()).add(topico)
-
 
     # ==================================================
     # SUBSCRICAO
@@ -320,6 +329,7 @@ class Broker:
     # ==================================================
     # CANCELAMENTO DE SUBSCRICAO
     # ==================================================
+
     def cancelarSubscricao(self, subscriber_id:int, topico:str):
         partes = topico.split("/")
 
@@ -365,7 +375,6 @@ class Broker:
         #Remove a subscricao do dicionario de portas do subscritor
         with self.subscritoresLock.write:
             self.subscritores[subscriber_id][1].pop(topico,None)
-
 
     # ==================================================
     # TERMINACAO ORDENADA
@@ -420,7 +429,6 @@ class Broker:
             with self.socketsLock.write:
                 socket = self.sockets[1].pop(identificador,None)
                 if socket is not None: util.fechar(socket)
-
 
     # ==================================================
     # PESQUISA DE DESTINATARIOS
@@ -508,9 +516,10 @@ class Broker:
 
         return resultado, ack_dic
 
-    # =====================================================================
+    # ==================================================
     # FUNCAO DE FECHO DE SOCKETS 
-    # =====================================================================
+    # ==================================================
+
     def fecha_sockets (self):
         with self.socketsLock.write:
             for s in self.sockets[0].values():
