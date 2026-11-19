@@ -82,7 +82,7 @@ class Subscriber:
             data_port = data_socket.getsockname()[1]
             rs = tipo
             cs = not tipo
-            mensagem = subControl.controiMessage(True,False,rs,cs,False,qos,self.id,topico,data_port) 
+            mensagem = subControl.controiMessage(False,False,rs,cs,False,qos,self.id,topico,data_port) 
             #Adormece a thread até que esteja no momento de atuar
             time.sleep(max(tempo-time.monotonic()+self.inicio,0))
             #Envia a mensagem e recebe resposta
@@ -165,7 +165,7 @@ class Subscriber:
             lista = list(self.subscribe)
         for filtro,filtro_qos in lista:
             if (util.filtroCorresponde(filtro,topico)) and filtro_qos == 2: return 2
-        return qos
+        return 1
 
    
 

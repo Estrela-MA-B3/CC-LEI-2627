@@ -1,6 +1,6 @@
 import socket
 
-SUBCONTROL_HEADER_SIZE = 4
+SUBCONTROL_HEADER_SIZE = 3
 
 def interpretar_SubControl(dados: bytearray) -> tuple[int, bool, bool, bool, bool, bool, int, int, int, str]:
 
