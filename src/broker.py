@@ -239,9 +239,9 @@ class Broker:
         sub_dic, ack_dic = self.obterDestinatarios(topico,message_id)
         if sub_dic is None or ack_dic is None: return
         for id_sub,endereco in sub_dic.items():
-            self.enviaPublicacao(endereco,mensagem)
             with ack_dic[0].write:
                 ack_dic[1][id_sub] = time.monotonic()
+            self.enviaPublicacao(endereco,mensagem)
         while not self.running.wait(1):
             with ack_dic[0].read:
                 lista = list(ack_dic[1].items())
