@@ -81,7 +81,7 @@ class Subscriber:
                 print(f"Erro: {e}")
             
             finally:
-                self.control_socket.close()
+                util.fechar(self.control_socket)
                 for thread in thread_list:
                     thread.join()
 
@@ -116,7 +116,7 @@ class Subscriber:
         except OSError:
             pass
         finally:
-            if data_socket is not None: data_socket.close()
+            if data_socket is not None: util.fechar(data_socket)
 
     # ================================================================================
     # CICLO_UDP - RESPONSAVEL POR RECEBER METRICAS E CRIAR THREADS PARA O TRATAMENTO

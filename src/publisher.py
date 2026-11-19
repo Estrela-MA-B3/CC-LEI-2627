@@ -67,13 +67,13 @@ class Publisher:
                 with self.runningTCPLock.read:
                     if self.runningTCP <=0: break
                 time.sleep(1)
-            self.control_socket.close()
+            util.fechar(self.control_socket)
 
         except Exception as e:
             print(f"Erro: {e}")
         
         finally:
-            if self.runningTCP>0: self.control_socket.close()
+            if self.runningTCP>0: util.fechar(self.control_socket)
             else: 
 
                 for thread in thread_list:
@@ -133,7 +133,7 @@ class Publisher:
         finally:
             parar.set()
             if thread_ack is not None: thread_ack.join()
-            if data_socket is not None: data_socket.close()
+            if data_socket is not None: util.fechar(data_socket)
 
     # ==================================================================
     # FUNCAO DE THREAD - ENVIA UMA METRICA E RETRANSMITE SE NECESSÁRIO

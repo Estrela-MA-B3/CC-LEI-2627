@@ -1,3 +1,4 @@
+from socket import socket
 import time 
 
 def interpretar_String(dados:bytearray, n:int)->str:
@@ -14,3 +15,9 @@ def registaLog(file_path:str, identificador:int, topico:str, message_id:int):
             with open(file_path, "a", encoding="utf-8") as ficheiro:
                 ficheiro.write(f"{timestamp_ms} {identificador} {topico} {message_id}\n")
                 ficheiro.flush()
+
+def fechar(s):
+    try: s.shutdown(socket.SHUT_RDWR)
+    except OSError: pass
+    try: s.close()
+    except OSError: pass
