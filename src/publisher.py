@@ -34,9 +34,6 @@ class Publisher:
         self.runningTCPLock = mylock.Lock()
         self.control_socketLock = mylock.Lock()
         self.logLock = mylock.Lock()
-
-
-
         
     # ==================================================
     # CICLO PRINCIPAL
