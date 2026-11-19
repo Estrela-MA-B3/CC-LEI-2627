@@ -148,6 +148,7 @@ class Broker:
     
     
     def cicloTCP(self):
+        self.control_socket.settimeout(1.0)
         while self.running:
             try:
                 client_socket, client_address = self.control_socket.accept()
@@ -156,9 +157,8 @@ class Broker:
                 thread.start()
 
             #Termina com o close e a excessão associada caso contrário colocamos o timeout e esta condição para ele avaliar o running periodicamente
-            #except socket.timeout:
-            #    continue
-    
+            except socket.timeout:
+                continue
             except OSError as e:
                 if self.running:
                     self.erro_tcp = e
