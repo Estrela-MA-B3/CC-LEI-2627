@@ -19,7 +19,6 @@ class Subscriber:
         self.inicio = 0.0
         #Vamos assumir que é (ip,porta)
         self.broker_control: tuple[str, int] = config["broker_control"]
-        self.broker_data: tuple[str, int] = (config["broker_control"][0],-1)
         self.log:str = config["log"]
         self.duration: int = config["duration"]
         #Vamos assumir que subscribe é uma lista de (filtro, QoS)
@@ -44,25 +43,11 @@ class Subscriber:
 
     def executar(self):
             thread_list:list[threading.Thread] = []
-            data_socket:socket.socket
             self.inicio = time.monotonic()
-            try:
-                #Enviar a primeira mensagem e recebe a mensagem para receber qual a portaUDP do broker
-                data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                data_socket.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
-                data_socket.bind(('', 0))
-                data_port = data_socket.getsockname()[1]
+            try:                
                 self.control_socket.connect(self.broker_control)
-                mensagem = subControl.controiMessage(True,False,True,False,False,self.subscribe[0][1],self.id,self.subscribe[0][0],data_port)
-                self.control_socket.sendall(mensagem)
-                resposta = subControl.recebeMensagemSubControl(self.control_socket)
-                tamanhoTotal, udp, ps, rs, cs, to, QoS, identificador, porta, topico = subControl.interpretar_SubControl(resposta)
-                self.broker_data = (self.broker_data[0],porta)
-                thread = threading.Thread(target=self.cicloUDP,args=(data_socket,)) 
-                thread_list.append(thread)
-                thread.start()
                 #Caso tenha mais subscricoes estas são feitas paralelamente em varias threads
-                for subscricao in self.subscribe[1:]:
+                for subscricao in self.subscribe:
                     thread = threading.Thread(target=self.acaoProgramada,args=(0,True,subscricao[0],subscricao[1])) 
                     thread_list.append(thread)
                     thread.start()

@@ -72,7 +72,6 @@ class Publisher:
         finally:
             if self.runningTCP>0: util.fechar(self.control_socket)
             else: 
-
                 for thread in thread_list:
                     thread.join()
 
@@ -116,21 +115,20 @@ class Publisher:
                 message_id += 1
                 time.sleep(1/rate)
             espera = time.monotonic()
-            while (True):
-                if (time.monotonic() - espera > self.drain): break
+            while (time.monotonic()-espera < self.drain):
                 cond = True
                 with acks_lock.read:
                     for valor in acks.values():
                         if (valor==False): cond = False
                 if (cond): break
-                time.sleep(1)
+                time.sleep(0.5)
 
         except OSError:
             pass
         finally:
             parar.set()
-            if thread_ack is not None: thread_ack.join()
             if data_socket is not None: util.fechar(data_socket)
+            if thread_ack is not None: thread_ack.join()
 
     # ==================================================================
     # FUNCAO DE THREAD - ENVIA UMA METRICA E RETRANSMITE SE NECESSÁRIO
@@ -145,14 +143,15 @@ class Publisher:
         with self.logLock.write:
             util.registaLog(self.log, self.id, topico, message_id)
         inicio = time.monotonic()
-        while time.monotonic()-inicio >= self.drain:
-            time.sleep(1)
+        while time.monotonic()-inicio < self.drain:
+            time.sleep(0.5)
             with lock.read:
                 if acks[message_id]:
                     break
             try:
                 socket.sendto(message,addr)
-            except OSError: break
+            except OSError:
+                break
 
     # ============================================================
     # FUNCAO DE THREAD - RESPONSAVEL POR REGISTAR ACKS RECEBIDOS
@@ -164,14 +163,17 @@ class Publisher:
         while not parar.is_set():
             try:
                 resposta, addr = my_socket.recvfrom(1024)
-                ack, qos, message_id, identificador, topico, metrica = eventCast.interpretarEventCast(resposta)
+                try:
+                    ack, qos, message_id, identificador, topico, metrica = eventCast.interpretarEventCast(resposta)
+                except Exception:
+                    continue
                 if ack:
                     with lock.write:
                         if message_id in acks: acks[message_id] = True
             except socket.timeout:
                 continue
             except OSError:
-                raise
+                break
     
 
 

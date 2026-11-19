@@ -18,13 +18,11 @@ class RegionNode:
         self.subscribers:dict[int,int] = {}  # {subscriber_id: qos}
         self.children:dict[str,StationNode] = {}     # {estacao: StationNode}
 
-
 class StationNode:
     def __init__(self):
         # Subscritores de "regiao/estacao/*"
         self.subscribers:dict[int,int] = {}  # {subscriber_id: qos}
         self.children:dict[str,TopicLeaf] = {}     # {metrica: TopicLeaf}
-
 
 class TopicLeaf:
     def __init__(self, qos:int):
@@ -33,8 +31,7 @@ class TopicLeaf:
         # Message_id -> (Lock,{subscriber_id: (timestamp)})
         self.messages:dict[int, tuple[mylock.Lock,dict[int,float]]] = {}
         # Subscritores do topico especifico
-        self.subscribers:dict[int,int] = {}  # {subscriber_id: qos}
-        
+        self.subscribers:dict[int,int] = {}  # {subscriber_id: qos}      
 
 # ==================================================
 # BROKER
@@ -90,8 +87,8 @@ class Broker:
             self.control_socket.listen()
             self.data_socket.bind((self.bind, self.data_port))
 
-            tcp_thread = threading.Thread(target=self.cicloTCP)
-            udp_thread = threading.Thread(target=self.cicloUDP)
+            tcp_thread = threading.Thread(target=self.cicloTCP,daemon=True)
+            udp_thread = threading.Thread(target=self.cicloUDP,daemon=True)
 
             tcp_thread.start()
             udp_thread.start()
@@ -108,7 +105,6 @@ class Broker:
             util.fechar(self.control_socket)
             util.fechar(self.data_socket)
             self.fecha_sockets()
-    
             if tcp_thread is not None: tcp_thread.join()
             if udp_thread is not None: udp_thread.join()
 
@@ -122,7 +118,7 @@ class Broker:
             try:
                 client_socket, client_address = self.control_socket.accept()
     
-                thread = threading.Thread(target=self.tratamentoSubControl,args=(client_socket, client_address), daemon=True)
+                thread = threading.Thread(target=self.tratamentoSubControl,args=(client_socket, client_address))
                 thread.start()
 
             except socket.timeout:
@@ -190,7 +186,7 @@ class Broker:
             try:
                 mensagem, addr = self.data_socket.recvfrom(1024)
     
-                thread = threading.Thread(target=self.tratamentoEventCast,args=(mensagem, addr), daemon=True)
+                thread = threading.Thread(target=self.tratamentoEventCast,args=(mensagem, addr))
                 thread.start()
             
             except socket.timeout:
