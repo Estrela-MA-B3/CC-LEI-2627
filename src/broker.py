@@ -310,16 +310,21 @@ class Broker:
 
         # Faz a subscrição
         if len(partes) == 2 and partes[1] == "*":
+            #regiao/*
             with self.topicLock.write:
                 self.topics.setdefault(partes[0], RegionNode()).subscribers[subscriber_id] = qos
 
-        if len(partes) == 3:
+        elif len(partes) == 3:
             if partes[2] == "*":
+                #regiao/estacao/*
                 with self.topicLock.write:
                     self.topics.setdefault(partes[0], RegionNode()).children.setdefault(partes[1],StationNode()).subscribers[subscriber_id] = qos
             else:
+                #regiao/estacao/metrica
                 with self.topicLock.write:
                     self.topics.setdefault(partes[0], RegionNode()).children.setdefault(partes[1],StationNode()).children.setdefault(partes[2],TopicLeaf(0)).subscribers[subscriber_id] = qos
+        #Não respeita uma das três estrtuturas disponíveis
+        else: return
 
         with self.subscritoresLock.write:
             #Atualiza as subscricoes do subscriber 
